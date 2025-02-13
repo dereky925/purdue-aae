@@ -1,0 +1,34 @@
+clear;clc;close all
+
+% Define symbolic variables
+syms m0 m1 m2 l1 l2 theta1_e theta2_e g real
+% Define the matrix M (from the provided image)
+M = [m0 + m1 + m2, -m1*l1*cos(theta1_e), -m2*l2*cos(theta2_e);
+     -m1*l1*cos(theta1_e), m1*l1^2, 0;
+     -m2*l2*cos(theta2_e), 0, m2*l2^2];
+
+% Invert the matrix
+M_inv = inv(M);
+M_ = [0 0 0;
+      0 -m1*l1*g*cos(theta1_e) 0;
+      0 0 -m2*l2*g*cos(theta2_e)];
+M_inv = M_inv * M_;
+% disp(M_inv);
+
+% E1 = [0 0];
+% E2 = [pi,pi];
+% 
+% P1 = [2, 1, 1, 1, 1, 1, 0, 0];
+
+% Substitute specific values
+L1 = subs(M_inv, {m0, m1, m2, l1, l2, g, theta1_e, theta2_e}, {2, 1, 1, 1, 1, 1, 0, 0});
+L1_eig = eig(L1)'
+
+L2 = subs(M_inv, {m0, m1, m2, l1, l2, g, theta1_e, theta2_e}, {2, 1, 1, 1, 1, 1, pi, pi});
+L2_eig = eig(L2)'
+
+L3 = subs(M_inv, {m0, m1, m2, l1, l2, g, theta1_e, theta2_e}, {2, 1, 1, 1, 0.5, 1, 0, 0});
+M_sub = subs(M_inv, {m0, m1, m2, l1, l2, g, theta1_e, theta2_e}, {2, 1, 1, 1, 0.5, 1, pi, pi});
+
+
+

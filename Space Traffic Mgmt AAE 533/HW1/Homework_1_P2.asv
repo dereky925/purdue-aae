@@ -1,0 +1,120 @@
+clear;clc;close all;
+
+% Compute Geocentric Right Ascension & Declination of Station
+
+load('data.mat');
+station_x_ecef = data.StationXECEFKm .* 1000; % [m]
+station_y_ecef = data.StationYECEFKm .* 1000; % [m]
+station_z_ecef = data.StationZECEFKm .* 1000; % [m]
+
+% Compute range magnitude to station in ECEF
+R_ecef = sqrt(station_x_ecef.^2 + station_y_ecef.^2 + station_z_ecef.^2);
+
+station_x_eci = data.StationXECIKm .* 1000; % [m]
+station_y_eci = data.StationYECIKm .* 1000; % [m]
+station_z_eci = data.StationZECIKm .* 1000; % [m]
+
+% Compute range magnitude to station in ECI
+R_eci = sqrt(station_x_eci.^2 + station_y_eci.^2 + station_z_eci.^2);
+
+r_xy = sqrt(station_x_ecef.^2 + station_y_ecef.^2);
+
+% % Declination, geocentric 
+% decl_geoc = atan2(station_z_eci, r_xy); 
+% 
+% % Right Ascension, geocentric
+% r_ascen_geoc = atan2(station_y_eci, station_x_eci); 
+
+% Compute Julian Date
+JD = data.TimeMJD + 2400000.5; 
+
+% Compute Julian Centuries, T1
+T1 = (JD - 2451545) ./ 36525; 
+
+% Compute JD0, keep only integer portion
+JD0 = floor(JD); 
+
+% Compute T0
+T0 = (JD0 - 2451545) ./ 36525; 
+
+% Mean sidereal time of Greenwich 0h Earth time (UT)
+UT = 24110.54841 + 8640184.812866*T0 + 0.093104*T1.^2 - 0.0000062*T1.^3 + (1.0027279093*(mod(JD,1)-.5).*24).*3600;
+UT = UT ./ 3600;
+
+% Compute local sidereal time, approximation method
+% UT = 6.66452 + 0.0657098244*(JD0-2451544.5) + 1.0027279093*(mod(JD,1)-.5)*24;
+
+% Vallado textbook method
+% T_UTI = (JD - 2451545)/36525;
+% UT1 = 67310.54841 + (876600*3600 + 8640184.812866).*T_UTI + 0.093.*T_UTI.^2 - 6.2e-6.*T_UTI.^3;
+% UT = (UT1)./3600 + data.StationGeodeticLongitudedeg./15;
+% sidereal_time = mod( UT, 24);
+
+% Compute sidereal time
+sidereal_time = mod( UT + data.StationGeocentricLongitudedeg./15 , 24)
+
+% % Compute sidereal angle [deg]
+sidereal_angle = sidereal_time * 15;
+
+% Compute range magnitude to satellite
+r = sqrt( (data.SatelliteXECIKm*1000).^2 ...
+        + (data.SatelliteYECIKm*1000).^2 ...
+        + (data.SatelliteZECIKm*1000).^2 ) ;
+
+% Compute range magnitude from station to satellite
+rho = data.SatelliteRangeKm*1000
+test = sqrt( (data.SatelliteXECIKm*1000 - station_x_eci).^2 + (data.SatelliteYECIKm*1000 - station_y_eci).^2 + (data.SatelliteZECIKm*1000 - station_z_eci).^2 )
+
+
+% Compute topocentric declination [deg]
+decl_topo = asind( (r.*sind(data.SatelliteDecdeg) ...
+            - R_eci.*sind(data.StationGeocentricLatitudedeg)) ...
+            ./ rho ); %(data.SatelliteRangeKm.*1000) %rho
+
+% Compute topocentric right ascension [deg]
+r_ascen_topo_y = ( (r.*cosd(data.SatelliteDecdeg).*sind(data.SatelliteRAdeg) ...
+                       - R_eci.*cosd(data.StationGeocentricLatitudedeg).*sind(sidereal_angle)) ...
+                       ./ (rho.*cosd(decl_topo)) );
+
+r_ascen_topo_x = ( (r.*cosd(data.SatelliteDecdeg).*cosd(data.SatelliteRAdeg) ...
+                        -R_eci.*cosd(data.StationGeocentricLatitudedeg).*cosd(sidereal_angle)) ...
+                        ./ (rho.*cosd(decl_topo)));
+
+r_ascen_topo = atan2d(r_ascen_topo_y,r_ascen_topo_x);
+
+% Compute hour angle
+tau = sidereal_angle - r_ascen_topo;
+
+% Compute elevation
+h = asind(sind(data.StationGeodeticLatitudedeg).*sind(decl_topo) ...
+          + cosd(data.StationGeodeticLatitudedeg).*cosd(decl_topo).*cosd(tau))
+
+% Compute azimuth
+az_x = ( (sind(data.StationGeodeticLatitudedeg).*cosd(decl_topo).*cosd(tau) ...
+    - cosd(data.StationGeodeticLatitudedeg).*sind(decl_topo)) ...
+    ./ cosd(h) );
+
+az_y = (cosd(decl_topo).*sind(tau)./cosd(h));
+
+az = 180 + atan2d(-az_y, az_x)
+
+% 2.b. Compute Az El with Geodetic coords as Geocentric
+h_error = asind(sind(data.StationGeocentricLatitudedeg).*sind(decl_topo) ...
+          + cosd(data.StationGeocentricLatitudedeg).*cosd(decl_topo).*cosd(tau)) - h
+
+az_x_error = ( (sind(data.StationGeocentricLatitudedeg).*cosd(decl_topo).*cosd(tau) ...
+    - cosd(data.StationGeocentricLatitudedeg).*sind(decl_topo)) ...
+    ./ cosd(h) );
+
+az_y_error = (cosd(decl_topo).*sind(tau)./cosd(h));
+
+az_error = 180 + atan2d(-az_y_error, az_x_error) - az
+
+
+
+
+
+
+
+
+

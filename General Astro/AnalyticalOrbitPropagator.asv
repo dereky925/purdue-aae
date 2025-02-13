@@ -1,0 +1,69 @@
+function [eci_pos, eci_vel] = AnalyticalOrbitPropagator(a, ecc, incl, raan, argp, nu_0, t)
+    
+    % Derek Yu - Jan 25, 2025
+    % Reference: 
+    % D. A. Vallado, Fundamentals of Astrodynamics and Applications, 4th ed.
+
+    % a     = Semi-major axis [km]
+    % ecc   = Eccentricity
+    % inc   = Inclination [°]
+    % raan  = Right ascension of ascending node [°]
+    % argp  = Argument of perigee [°]
+    % nu_0  = Initial True anomaly [°]
+    
+    % eci_pos    = ECI position vector [km]
+    % eci_vel    = ECI velocity vector [km/s]
+
+    mu = 398600.4418;  % [km^3/s^2] Earth gravitational parameter
+
+    % Convert angles to radians
+    incl_rad = deg2rad(incl);
+    raan_rad = deg2rad(raan);
+    argp_rad = deg2rad(argp);
+    nu0_rad  = deg2rad(nu_0);
+
+    [M_0,~] = NU_TO_M(nu0_rad, ecc);
+
+    % Mean motion (rad/s)
+    n = sqrt(mu / a^3);
+
+    for i = 1:length(t)
+        dt = t(i);
+
+        % Compute mean anomaly at time step
+        M = M_0 + n*dt;
+
+        % Compute eccentric anomaly and true anomaly at time step
+        [nu,E] = M_TO_NU(M, ecc);
+
+        % Compute radial distance
+        p = a*(1-ecc^2); % Semi-parameter
+        r = p/(1+ecc*cos(nu)); % Radial distance
+
+        % Compute position in orbital plane
+        x_orb = r*cos(nu);
+        y_orb = r*sin(nu);
+
+        % Compute velocity in orbital plane (vis-viva)
+        % https://en.wikipedia.org/wiki/Perifocal_coordinate_system
+        % Velocity in polar coordinates:
+        % v_r = rdot = mu/h*ecc*sin(nu)
+        % v_theta = r*nu_dot = mu/h*(1+ecc*cos(nu))
+        h = sqrt(mu*p); % Specific angular momentum
+        vx_orb = -(mu/h) * sin(nu);
+        vy_orb =  (mu/h) * (ecc + cos(nu));
+        % vx_orb = mu/h * ecc*sin(nu);
+        % vy_orb = mu/h * (1+ecc*cos(nu));
+        % vx_orb = sqrt(2*mu/x_orb - mu/a);
+        % vy_orb = sqrt(2*mu/y_orb - mu/a);
+
+        % Rotate from orbital plane to ECI (3-1-3)
+        R_op_to_ECI = R3(-argp_rad) * R1(-incl_rad) * R3(-raan_rad);
+
+        eci_pos(i,:) = R_op_to_ECI * [x_orb y_orb 0]';
+        eci_vel(i,:) = R_op_to_ECI * [vx_orb vy_orb 0]';
+
+    end
+
+end 
+
