@@ -27,7 +27,9 @@ r_ijk = [656.0758  6596.8028 1473.0872]' * 1000; % [m]
 v_ijk = [-4.9631 -0.8127 5.7866]' * 1000; % [m/s]
 
 [a,ecc,incl,RAAN,argp,nu,truelon,arglat,lonper] = ...
-                                            ijk2keplerian(r_ijk, v_ijk);
+                                            ijk2keplerian(r_ijk, v_ijk)
+
+[r_ijk, v_ijk] = keplerian2ijk(a,ecc,incl,RAAN,345,nu);
 
 num_orbits = 100;
 P_coast = num_orbits * (2*pi)/(sqrt(mu_Earth/(a^3))); %Coast time
@@ -43,6 +45,7 @@ for i = 1:86400:length(Z)
     
     [~,~,~,curr_RAAN,~,~,~,~,~] = ijk2keplerian(Z(i,1:3), Z(i,4:6));
 
+
     if i ~= 1
         dRAAN((i-1)/86400) = curr_RAAN - prev_RAAN;
     end
@@ -50,8 +53,27 @@ for i = 1:86400:length(Z)
     prev_RAAN = curr_RAAN;
     
 end
-mean(dRAAN)
+disp('RAAN rate:')
+disp(mean(dRAAN))
 % Z(end,1:3)
+
+raan_plot = zeros(1,length(Z));
+argp_plot = zeros(1,length(Z)); 
+for i = 1:1:length(Z)
+    [~,~,~,raan_plot(i),argp_plot(i),~,~,~,~] = ijk2keplerian(Z(i,1:3), Z(i,4:6));
+end
+
+figure('Color','white','Position',[0 0 1400 1000])
+hold on;grid minor
+plot(Tout/86400,argp_plot)
+title('\omega wrapping')
+xlabel('Time [days]')
+ylabel('\omega [°]')
+
+ax=gca;
+ax.FontSize = 20;
+% plot(raan_plot)
+%%
 
 % Orbit Plot  =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 plotA = figure();

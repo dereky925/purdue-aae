@@ -85,7 +85,7 @@ function [r_vec, rdot_vec] = keplerian2eci(varargin)
     
     % Combined rotation matrix from PQW to ECI:
     % r_ECI = R_z(raan) * R_x(incl) * R_z(argp) * r_PQW
-    ECI_ROT = R3(raan_rad) * R1(incl_rad) * R3(argp_rad);
+    ECI_ROT = R3(-raan_rad) * R1(-incl_rad) * R3(-argp_rad);
     
     % Compute ECI position and velocity vectors.
     r_vec = ECI_ROT * r_PQW;

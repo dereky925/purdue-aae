@@ -26,7 +26,6 @@ x = [-6659000 -1896000 180700 1400 -4300 6100];
 
 
 [r_vec,rdot_vec] = keplerian2eci(a,ecc,incl,raan,argp,nu);
-
 [r_vec_v,rdot_vec_v] = keplerian2ijk(a*1000,ecc,incl,raan,argp,nu);
 
 
@@ -60,8 +59,17 @@ T = 180/EARTH_RATE * 60 * 60; % [s]
 % Compute semi-major axis
 a = ( mu*(T/(2*pi))^2 )^(1/3);
 
+% a = 3.4806E4;
+% T = 2*pi*sqrt(a^3/mu);
+% ecc = 0.6;
+% incl = 180-75; % deg
+% nu = 0;
+% argp = 160; % deg
+% raan = 0; % deg
+
 % Convert orbital elements to cartesian
 [r_vec,rdot_vec] = keplerian2eci(a,ecc,incl,raan,argp,nu);
+% [r_vec,rdot_vec] = keplerian2ijk(a,ecc,incl,raan+360,argp,nu);
 
 % Create time vector starting from 0
 t = linspace(0,T,100);

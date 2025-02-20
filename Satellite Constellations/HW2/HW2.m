@@ -85,8 +85,8 @@ theta = 0;  % [°] Argument of latitude
 T = 1.617608582630545; % [hours]
 t = 1:T*3600;
 
-[r_vec, v_vec] = keplerian2eci(a,ex,ey,incl,raan,theta,'alt');
-% [a, ecc, incl, raan, ~, ~, ecc_x, ecc_y, arglat] = eci2keplerian(r_vec, rdot_vec);
+[r_vec, r_vec] = keplerian2eci(a,ex,ey,incl,raan,theta,'alt');
+% [a, ecc, incl, raan, ~, ~, ecc_x, ecc_y, arglat] = eci2keplerian(r_vec, r_vec);
 
 % [r_vec, v_vec] = elements2cartesian(a, ex, ey, incl, raan, theta);
 
