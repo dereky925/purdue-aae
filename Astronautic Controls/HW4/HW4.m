@@ -19,6 +19,15 @@ clear;clc;close all
 
 t0 = 0;
 
+a_E = AU;
+nu_E = 0; % [rad]
+
+a_M = 1.524*AU;
+nu_M = pi; % [rad]
+
+
+
+
 
 
 
