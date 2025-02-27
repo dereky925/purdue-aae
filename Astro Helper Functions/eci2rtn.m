@@ -9,13 +9,11 @@ function a_RTN = eci2rtn(r_eci, v_eci, a_eci)
     %   a_RTN - Vector in RTN [3x1]
 
     % Compute radial unit vector (R)
-    r_norm = norm(r_eci);
-    R_hat = r_eci / r_norm;
+    R_hat = r_eci / norm(r_eci);
 
     % Compute angular momentum vector (h = r x v)
     h_eci = cross(r_eci, v_eci);
-    h_norm = norm(h_eci);
-    N_hat = h_eci / h_norm;  % Normal unit vector (N)
+    N_hat = h_eci / norm(h_eci);  % Normal unit vector (N)
 
     % Compute transverse unit vector (T)
     T_hat = cross(N_hat, R_hat);

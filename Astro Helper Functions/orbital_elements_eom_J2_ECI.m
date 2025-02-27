@@ -1,4 +1,4 @@
-function dXdt = orbital_elements_eom(t, x, A_M, utcTime)
+function dXdt = orbital_elements_eom_J2_ECI(~, x)
 
     % Gauss planetary equations
 
@@ -14,9 +14,11 @@ function dXdt = orbital_elements_eom(t, x, A_M, utcTime)
     % dXdt(3) = Inclination [°]
     % dXdt(4) = RAAN [°]
     % dXdt(5) = Argument of perigee [°]
-    % dXdt(6) = Mean anomaly [°]
+    % dXdt(6) = True anomaly [°]
 
     [r_vector,v_vector] = keplerian2eci(x(1),x(2),x(3),x(4),x(5),x(6));
+
+    r = sqrt(r_vector(1)^2 + r_vector(2)^2 + r_vector(3)^2);
 
     % Extract orbital elements
     a = x(1);                 % Semi-major axis [km]
@@ -26,41 +28,13 @@ function dXdt = orbital_elements_eom(t, x, A_M, utcTime)
     argp = deg2rad(x(5));    % Argument of perigee [rad]
     nu = deg2rad(x(6));       % True anomaly [rad]
 
-    % Increment utcTime
-    current_utcTime = utcTime + seconds(t);
-    JD = juliandate(current_utcTime);
-    
-    % Compute J2 Effects ==================================================
-    %https://www.vcalc.com/wiki/eng/J2
-    J2 = 0.00108262668;
-    
-    RE = 6371; % Earth Radius [km]
-    
-    % Compute time in seconds since reference epoch
-    time_since_epoch = JD * 24*60*60;
-    
-    % Calculate the Earth rotation angle since epoch
-    omega = 7.2921159e-5; % Earth's angular velocity in rad/s, sidereal day
-    theta = omega * time_since_epoch;
-    
-    % Rotate ECI position vector to ECEF
-    r_vec_ECEF = R3(theta) * r_vector;
-    
-    % Compute ECEF position norm
-    r_vec_ECEF_norm = norm(r_vec_ECEF);
-    
-    s = r_vec_ECEF(1)/r_vec_ECEF_norm;
-    t = r_vec_ECEF(2)/r_vec_ECEF_norm;
-    u = r_vec_ECEF(3)/r_vec_ECEF_norm;
-    
-    % Compute J2 effects at ECEF position
-    u_J2 = 3/2 * [5*s*u^2 - s; 5*t*u^2 - t; 5*u^3 - 3*u];
-    a_J2_ECEF = MU*J2/r_vec_ECEF_norm^2*(RE/r_vec_ECEF_norm)*u_J2; % J2
-    
-    % Rotate back to ECI
-    a_J2_ECI = R3(-theta) * a_J2_ECEF;
+    % ECI J2 perturbation implementation
+    a_J2_ECI = -3*MU*J2*EARTH_RADIUS^2/(2*r^5) * ...
+                   [(1-5*r_vector(3)^2/r^2)*r_vector(1) ;...
+                    (1-5*r_vector(3)^2/r^2)*r_vector(2) ; ...
+                    (3-5*r_vector(3)^2/r^2)*r_vector(3)];
 
-    % Rotate to RTN frame (radial, transverse, normal)
+    % Rotate J2 perturbation to RTN frame (radial, transverse, normal)
     a_J2_RTN = eci2rtn(r_vector, v_vector, a_J2_ECI);
 
     % Derived quantities
@@ -83,24 +57,26 @@ function dXdt = orbital_elements_eom(t, x, A_M, utcTime)
     % Nominal Keplerian dynamics
     f0 = [0; 0; 0; 0; 0; n];
 
-    % Solar Radiation Pressure ============================================
-    G_0 = 1.02E14; % [kg*km/s^2] solar flux constant
-    au = 1.496e11; % Astronomical Unit
-    r_sun = sun(JD)'*au; % Distance to sun
-    sun_unit = (x(1:3)-r_sun)/norm(x(1:3)-r_sun); % Sun unit vector
-    a_SRP_ECI = -A_M * G_0 / (norm(x(1:3)-r_sun)^2) * sun_unit; % Cannon-ball model
-
-    % Rotate SRP to RTN frame (radial, transverse, normal)
-    a_SRP_RTN = eci2rtn(r_vector, v_vector, a_SRP_ECI);
-
     % Perturbed dynamics due to acceleration ad in ECI
-    ad = a_J2_RTN + a_SRP_RTN;
+    ad = a_J2_RTN;
     dXdt = f0 + B * ad;
 
     dXdt = dXdt(:);
     dXdt(3) = rad2deg(dXdt(3));
     dXdt(4) = rad2deg(dXdt(4));
     dXdt(5) = rad2deg(dXdt(5));
+
+    % Convert M to 
+    conversion_factor = ((1 + e*cos(nu))^2) / ((1 - e^2)^(3/2));
+    dXdt(6) = dXdt(6) * conversion_factor;
     dXdt(6) = rad2deg(dXdt(6));
+
+    % Outputs:
+    % dXdt(1) = Semi-major axis [km]
+    % dXdt(2) = Eccentricity
+    % dXdt(3) = Inclination [°]
+    % dXdt(4) = RAAN [°]
+    % dXdt(5) = Argument of perigee [°]
+    % dXdt(6) = True anomaly [°]
 
 end

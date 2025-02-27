@@ -17,10 +17,10 @@ function [M,E] = nu2m(nu, ecc)
 
     M = E - ecc*sin(E);
 
-    % Ensure within 360
+    % Ensure within 2pi
     M = mod(M, 2*pi);
 
-    % Ensure within 360
+    % Ensure within 2pi
     E = mod(E, 2*pi);
     
 end
