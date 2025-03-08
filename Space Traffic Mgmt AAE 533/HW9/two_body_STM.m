@@ -10,9 +10,9 @@ function dxdt = two_body_STM(~, x)
     dxdt(1:3) = v;
     dxdt(4:6) = -mu/norm(r)^3 * r;
     
-    F = jacobian([r;v]);
+    a = jacobian([r;v]);
 
-    Phi_dot = F * Phi;
+    Phi_dot = a * Phi;
     dxdt(7:end) = Phi_dot(:);
 
 end

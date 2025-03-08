@@ -1,4 +1,4 @@
-function F = jacobian(x)
+function a = jacobian(x)
 
     mu = 3.9860044e14;
     r = x(1:3,1);
@@ -11,5 +11,5 @@ function F = jacobian(x)
     X(2,3) = 3 * mu * r(2) * r(3) / r_mag^5;
     X(3,2) = X(2,3);
     
-    F = [zeros(3), eye(3); X, zeros(3)];
+    a = [zeros(3), eye(3); X, zeros(3)];
 end
