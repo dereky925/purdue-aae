@@ -1,0 +1,192 @@
+% =========================================================================
+% 
+% Filename:       HW4.m
+% Author:         Derek Yu
+% Institution:    Purdue University
+% Course:         AAE590 - Fundamentals of State Estimation
+% Professor:      Dr. Keith LeGrand
+% Contact:        klegrand@purdue.edu
+% Assignment:     HW 4
+% Semester:       Fall 2025
+% 
+% Description:
+%
+% =========================================================================
+
+%% Part a
+
+clear; close all; clc; 
+
+mx = [7; 0];
+Pxx = [4 0.5;
+      0.5 1];
+
+% mean = 7
+% spread = mean +/- 3*sqrt(4) = 6, so 1 to 14
+% same for theta, +/- 3*sqrt(1) = -3 to 3
+r_vec  = linspace(0, 14, 200);      % distance units
+th_vec = linspace(-3, 3, 200);      % rad
+[R, TH] = meshgrid(r_vec, th_vec);
+
+X = [R(:) TH(:)]';            
+dx = X - mx;
+Px_inv = inv(Pxx);
+c = 1/(2*pi*sqrt(det(Pxx)));
+quad = sum((Px_inv*dx).*dx,1); 
+px = c*exp(-0.5*quad);
+px = reshape(px, size(R));
+
+figure('Position',[0, 500, 800, 700],'Color','White'); 
+hold on
+grid minor
+contour(R, TH, px, 50); 
+c = colorbar;
+xlabel('r [DU]'); ylabel('\theta [rad]');
+title('Input density p(x)','FontSize',24);
+
+% 3 sigma ellipse in r, theta space
+L = chol(Pxx,'lower');
+phi = linspace(0, 2*pi, 200);
+circle = [cos(phi); sin(phi)];
+ell3 = mx + 3*L*circle;
+
+plot(ell3(1,:), ell3(2,:), 'r', 'LineWidth', 2);
+leg = legend('p(x) contours','3\sigma ellipse');
+
+ax = gca;
+ax.LabelFontSizeMultiplier = 2;
+ax.XAxis.FontSize = 14;
+ax.YAxis.FontSize = 14; 
+leg.FontSize = 25;
+c.FontSize = 20;
+
+
+%% Part c
+
+% close all
+
+x_vec = linspace(-15, 15, 300);
+y_vec = linspace(-15, 15, 300);
+[Xc, Yc] = meshgrid(x_vec, y_vec);
+
+% Convert to polar 
+R = sqrt(Xc.^2 + Yc.^2);
+TH = atan2(Yc, Xc);
+
+eta = [R(:) TH(:)]';
+deta = eta - mx;
+Px_inv = inv(Pxx);
+c = 1/(2*pi*sqrt(det(Pxx))); % first term
+
+quad = sum( (Px_inv*deta) .* deta, 1);
+pz = c * (1./eta(1,:)) .* exp(-0.5*quad);
+pz = reshape(pz, size(R));
+
+figure('Position',[800, 500, 800, 700],'Color','White'); 
+hold on
+grid minor
+contour(Xc, Yc, pz, 20); 
+c = colorbar;
+axis equal;
+xlabel('x [DU]'); 
+ylabel('y [DU]');
+title('Exact output density p(z) in Cartesian coordinates','FontSize',24);
+
+ax = gca;
+ax.LabelFontSizeMultiplier = 2;
+ax.XAxis.FontSize = 14;
+ax.YAxis.FontSize = 14; 
+c.FontSize = 20;
+
+
+%% Part d
+
+% close all
+
+% 
+% Mean
+mz_lin = [mx(1)*cos(mx(2));
+          mx(1)*sin(mx(2))]; 
+
+% Jacobian H at mx
+r0 = mx(1); th0 = mx(2);
+H = [cos(th0)   -r0*sin(th0);
+     sin(th0)    r0*cos(th0)];     % H = [1 0; 0 7]
+
+Pzz_lin = H*Pxx*H';
+
+% Scaled unscented transform
+n = 2;
+alpha = 1; 
+kappa = 0;
+beta  = 2;
+
+lambda = alpha^2*(n + kappa) - n;
+c = n + lambda;
+
+S = chol(c*Pxx, 'lower');  
+
+% Sigma points
+Xsig = zeros(n, 2*n+1);
+Xsig(:,1) = mx;
+for i = 1:n
+    Xsig(:,1+i)   = mx + S(:,i);
+    Xsig(:,1+i+n) = mx - S(:,i);
+end
+
+% Weights
+Wm = ones(1,2*n+1) * 1/(2*c);
+Wc = Wm;
+Wm(1) = lambda/c;
+Wc(1) = lambda/c + (1 - alpha^2 + beta);
+
+
+Zsig = zeros(2, 2*n+1);
+for i = 1:2*n+1
+    r  = Xsig(1,i);
+    th = Xsig(2,i);
+    Zsig(:,i) = [r*cos(th); r*sin(th)];
+end
+
+% Approximate mean
+mz_ut = Zsig * Wm';
+
+% Approximate covariance
+Pzz_ut = zeros(2);
+for i = 1:2*n+1
+    dz = Zsig(:,i) - mz_ut;
+    Pzz_ut = Pzz_ut + Wc(i) * (dz*dz');
+end
+
+
+XY = [Xc(:) Yc(:)]';
+
+% Helper function
+gauss2d = @(mu,S,XY) ...
+    (1/(2*pi*sqrt(det(S)))) * ...
+    exp(-0.5*sum(((inv(S)*(XY-mu)).*(XY-mu)),1));
+
+pz_lin = gauss2d(mz_lin, Pzz_lin, XY);
+pz_ut  = gauss2d(mz_ut,  Pzz_ut,  XY);
+pz_lin = reshape(pz_lin, size(Xc));
+pz_ut  = reshape(pz_ut,  size(Xc));
+
+figure('Position',[1600, 500, 800, 700],'Color','White'); 
+hold on;
+grid minor
+contour(Xc, Yc, pz,  20);    
+contour(Xc, Yc, pz_lin, 10, '--k');
+contour(Xc, Yc, pz_ut,  10, '-.r');
+axis equal;
+xlabel('x'); ylabel('y');
+leg = legend('Exact p(z)','EKF Gaussian','UT Gaussian','Location','best');
+title({
+    'Exact vs EKF vs UT Approximations', ...
+    sprintf('\\alpha = %.3f   \\beta = %.3f   \\kappa = %.3f', alpha, beta, kappa)
+}, 'FontSize', 24);
+
+ax = gca;
+ax.LabelFontSizeMultiplier = 2;
+ax.XAxis.FontSize = 14;
+ax.YAxis.FontSize = 14; 
+leg.FontSize = 25;

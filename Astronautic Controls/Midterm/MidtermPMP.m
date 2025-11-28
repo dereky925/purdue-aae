@@ -1,15 +1,12 @@
 % =========================================================================
-% 
-% Filename:       HW4.m
-% Author:         Derek Yu
+% Filename:       MidtermPMP_mass.m
+% Author:         Derek Yu (Modified)
 % Institution:    Purdue University
 % Course:         AAE590 - Applied Control in Astronautics
 % Professor:      Dr. Kenshiro Oguri
-% Assignment:     HW 4
+% Assignment:     MidtermPMP (Modified to include mass)
 % Semester:       Spring 2025
-% 
-% Description: Homework 4
-%
+% Description:    Minimum-Fuel Trajectory from Earth to Mars with a mass state
 % =========================================================================
 
 %%
@@ -19,7 +16,7 @@ format long
 % PARAMETERS
 mu = 1;              % Non-dimensional gravitational parameter
 umax = 0.1;          % Maximum control magnitude
-tf = 6.5;            % Fixed final time (non-dimensional)
+tf = 8;            % Fixed final time (non-dimensional)
 
 % Smoothing parameters for continuation
 rhos = [1, 0.1, 1e-2, 1e-3];
@@ -238,6 +235,7 @@ function dydt = odefun(t,y,mu,umax,rho)
     else
         u = [0;0];
     end
+
     drdt = v;
     dvdt = - r/(norm_r^3) + u;
     dlambda_v_dt = - lambda_r;
