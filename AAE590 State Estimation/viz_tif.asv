@@ -1,0 +1,57 @@
+clear;clc;close all
+
+%% === Load DEM from GeoTIFF ===
+tifFile = 'output2.tin.tif';   % <-- change this
+
+% For newer MATLAB (R2019b+)
+[Z, R] = readgeoraster(tifFile);  
+
+% If readgeoraster doesn't exist, use:
+% [Z, R] = geotiffread(tifFile);
+
+Z = double(Z);   % work in double for plotting
+
+%% Handle NoData values (optional but recommended)
+info = geotiffinfo(tifFile);
+if isfield(info, 'GeoTIFFTags') && isfield(info.GeoTIFFTags, 'GDAL_NODATA')
+    nodataVal = str2double(info.GeoTIFFTags.GDAL_NODATA);
+    Z(Z == nodataVal) = NaN;
+end
+
+Z(Z < 0) = NaN;
+
+%% Quick 2D visualization
+figure;
+imagesc(Z);
+axis image;
+set(gca, 'YDir', 'normal');    % so north is up
+colorbar;
+title('DEM from GeoTIFF (.tif)');
+xlabel('Column index');
+ylabel('Row index');
+
+
+%%
+%% === Build X/Y coordinate grids from spatial reference ===
+% geotiffread gives R as a Map Raster Reference object
+
+x = R.XLimWorld(1) + (0:R.RasterSize(2)-1) * R.CellExtentInWorldX;
+y = R.YLimWorld(2) - (0:R.RasterSize(1)-1) * R.CellExtentInWorldY;  % flip Y
+
+[X, Y] = meshgrid(x, y);
+
+%% === 3D surface plot ===
+figure;
+surf(X, Y, Z, Z, 'EdgeColor', 'none');  % color by height
+colormap(parula);
+colorbar;
+title('3D DEM Surface');
+xlabel('X (map units)');
+ylabel('Y (map units)');
+zlabel('Elevation');
+
+axis tight;
+daspect([1 1 0.2]);  % adjust vertical exaggeration (smaller = taller)
+view(45, 60);        % good viewing angle
+camlight headlight;
+lighting gouraud;

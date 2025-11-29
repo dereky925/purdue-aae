@@ -13,25 +13,28 @@
 %  - Effective sample size: N_eff = 1 / sum_i (w_k^(i))^2                  (Eq. 3)
 %  - Systematic resampling when N_eff < N_thresh                           (Eq. 4)
 %
-% The script is fully self-contained: it synthesizes a DEM and truth
-% trajectory, generates noisy LiDAR measurements, runs the PF, and plots
-% trajectories and errors so anyone can follow the workflow.
+% The script loads a DEM from GeoTIFF (see viz_tif.m), synthesizes a truth
+% trajectory over that map, generates noisy LiDAR measurements, runs the PF,
+% and plots trajectories and errors so anyone can follow the workflow.
 
 clear; clc; close all;
 rng(7); % deterministic seed for repeatability
 
 %% Configuration parameters
 cfg.dt          = 0.5;    % [s] time step
-cfg.T           = 180;    % [s] total duration
+cfg.T           = 170;    % [s] total duration (covers ~4.6 km at 27 m/s)
 cfg.N           = round(cfg.T / cfg.dt) + 1; % number of epochs
-cfg.V           = 55;     % [m/s] nominal groundspeed (constant magnitude)
-cfg.omega_cmd   = @(t) 0.01 * sin(0.03*t); % [rad/s] commanded turn rate profile
+cfg.start.x     = 406788; % [m] UTM Easting start
+cfg.start.y     = 3992410; % [m] UTM Northing start
+cfg.path.x_target = 411428; % [m] desired end x (eastward)
+cfg.V           = (cfg.path.x_target - cfg.start.x) / cfg.T; % [m/s] set to hit target x
+cfg.omega_cmd   = @(t) s_turn_profile(t, 80, 0.018); % [rad/s] S-turn then straighten
 cfg.h_msl       = @(t) 500 + 20*sin(0.01*t); % [m] UAV altitude (mean sea level)
 
-% DEM (synthetic Grand-Canyon-esque terrain)
-cfg.dem.x_extent = 2000; % [m] half-width in x
-cfg.dem.y_extent = 2000; % [m] half-width in y
-cfg.dem.n_pts    = 250;  % grid resolution (n x n)
+% DEM (real GeoTIFF)
+cfg.dem.tifFile      = 'grand_canyon_rectangle_slice.tin.tif';
+cfg.dem.sample_step  = 5;    % decimate raster for speed; set to 1 for full res
+cfg.dem.point_step   = 500;  % for optional point cloud visualization
 
 % LiDAR / measurement model
 cfg.meas.bias     = 1.5;  % [m] constant bias
@@ -45,30 +48,44 @@ cfg.pf.sigma_omega = 0.01;   % [rad/s] process noise on turn rate
 cfg.pf.sigma_meas  = cfg.meas.sigma; % assumed measurement noise
 cfg.pf.resample_ratio = 0.5; % resample when N_eff < ratio * Np
 
-%% Build synthetic DEM (digital elevation model)
-% Elevation model f(x, y) uses additive sinusoids and a canyon trench.
-xg = linspace(-cfg.dem.x_extent, cfg.dem.x_extent, cfg.dem.n_pts);
-yg = linspace(-cfg.dem.y_extent, cfg.dem.y_extent, cfg.dem.n_pts);
-[Xg, Yg] = meshgrid(xg, yg);
+%% Load DEM from GeoTIFF (downsampled for runtime)
+dem = viz_tif(cfg.dem.tifFile, ...
+    'sampleStep', cfg.dem.sample_step, ...
+    'pointCloudStep', cfg.dem.point_step, ...
+    'makePlots', false);
 
-% Canyon: negative bump along y-axis plus rolling hills
-canyon = -120 * exp(-((Xg/350).^2)) .* exp(-((Yg/900).^2));
-hills  = 80 * sin(Xg/500) .* cos(Yg/400) + 40 * sin((Xg+Yg)/450);
-H = canyon + hills;
+H = dem.Z;
+xg = dem.X(1, :);
+yg = dem.Y(:, 1);
+dem_interp = dem.interp;
+cfg.dem.x_range = dem.bounds.xlim;
+cfg.dem.y_range = dem.bounds.ylim;
+cfg.dem.center = dem.bounds.center;
+x_rng = cfg.dem.x_range;
+y_rng = cfg.dem.y_range;
+x_span = diff(x_rng);
+y_span = diff(y_rng);
 
-% griddedInterpolant expects NDGRID ordering; transpose meshgrid arrays.
-% This matches p(x,y) queries to the same terrain used for plotting.
-dem_interp = griddedInterpolant(Xg', Yg', H', "linear", "nearest");
+% Warn if requested start is outside DEM
+if cfg.start.x < x_rng(1) || cfg.start.x > x_rng(2) || ...
+   cfg.start.y < y_rng(1) || cfg.start.y > y_rng(2)
+    warning('Start (%.1f, %.1f) is outside DEM bounds x:[%.1f %.1f], y:[%.1f %.1f]', ...
+        cfg.start.x, cfg.start.y, x_rng(1), x_rng(2), y_rng(1), y_rng(2));
+end
 
 %% Simulate truth trajectory (discrete-time kinematics)
 truth.x   = zeros(cfg.N,1);
 truth.y   = zeros(cfg.N,1);
 truth.psi = zeros(cfg.N,1); % heading [rad], north-east frame
 truth.h   = zeros(cfg.N,1); % altitude MSL [m]
+truth.x(1) = cfg.start.x;
+truth.y(1) = cfg.start.y;
+truth.h(1) = cfg.h_msl(0);
+truth.psi(1) = 0; % eastbound
 
 for k = 2:cfg.N
     t = (k-1) * cfg.dt;
-    omega = cfg.omega_cmd(t); % commanded yaw rate
+    omega = cfg.omega_cmd(t); % commanded yaw rate (S-turn then straight)
 
     % Propagate truth (no process noise in the "truth" model).
     truth.psi(k) = truth.psi(k-1) + omega * cfg.dt;
@@ -87,8 +104,8 @@ meas(drop_mask) = NaN; % simulate occasional dropout
 
 %% Initialize particle filter
 % State vector per particle: [x; y; psi]. Altitude is assumed known from baro/GNSS.
-particles.x   = (rand(cfg.pf.Np,1) - 0.5) * 2 * cfg.dem.x_extent;
-particles.y   = (rand(cfg.pf.Np,1) - 0.5) * 2 * cfg.dem.y_extent;
+particles.x   = x_rng(1) + rand(cfg.pf.Np,1) * x_span;
+particles.y   = y_rng(1) + rand(cfg.pf.Np,1) * y_span;
 particles.psi = (rand(cfg.pf.Np,1) - 0.5) * 2 * pi;
 particles.w   = ones(cfg.pf.Np,1) / cfg.pf.Np; % uniform initial weights
 
@@ -121,8 +138,11 @@ for k = 2:cfg.N
     % 3) Compute importance weights (Eq. 1) using Gaussian likelihood
     z_k = meas(k);
     if ~isnan(z_k)
+        valid = ~isnan(h_pred);
         residual = z_k - h_pred;
-        particles.w = particles.w .* exp(-0.5 * (residual ./ cfg.pf.sigma_meas).^2);
+        likelihood = exp(-0.5 * (residual ./ cfg.pf.sigma_meas).^2);
+        likelihood(~valid) = 0; % discard particles in void/no-data terrain
+        particles.w = particles.w .* likelihood;
     else
         % If measurement is missing, only carry over prior weights
         particles.w = particles.w;
@@ -132,8 +152,8 @@ for k = 2:cfg.N
     w_sum = sum(particles.w);
     if w_sum <= eps
         % All particles unlikely: re-spawn uniformly and reset weights
-        particles.x   = (rand(cfg.pf.Np,1) - 0.5) * 2 * cfg.dem.x_extent;
-        particles.y   = (rand(cfg.pf.Np,1) - 0.5) * 2 * cfg.dem.y_extent;
+        particles.x   = x_rng(1) + rand(cfg.pf.Np,1) * x_span;
+        particles.y   = y_rng(1) + rand(cfg.pf.Np,1) * y_span;
         particles.psi = (rand(cfg.pf.Np,1) - 0.5) * 2 * pi;
         particles.w   = ones(cfg.pf.Np,1) / cfg.pf.Np;
     else
@@ -210,4 +230,13 @@ function p_out = systematic_resample(p_in)
     p_out.y   = p_in.y(idx);
     p_out.psi = p_in.psi(idx);
     p_out.w   = ones(Np,1) / Np; % weights reset after resampling
+end
+
+%% S-turn yaw rate profile: sinusoid for a window, then zero
+function omega = s_turn_profile(t, active_duration, omega_amp)
+    if t <= active_duration
+        omega = omega_amp * sin(2*pi*t/active_duration);
+    else
+        omega = 0;
+    end
 end
