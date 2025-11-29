@@ -1,4 +1,4 @@
-% AAE590 Final Project – Terrain-Referenced Particle Filter (MATLAB)
+% AAE590 Final Project – Terrain-Referenced Particle Filter
 % Derek Yu
 %
 % This script implements the proposal: use a particle filter to estimate
@@ -19,6 +19,9 @@
 
 clear; clc; close all;
 rng(1); % deterministic seed for repeatability
+set(groot, 'defaultFigureColor', 'w'); % white backgrounds
+set(groot, 'defaultAxesFontSize', 12);
+set(groot, 'defaultLineLineWidth', 1.3);
 
 % State being estimated: x (east), y (north), psi (heading). Altitude is assumed
 % known from another sensor. Each particle carries one hypothesis of state plus
@@ -50,11 +53,14 @@ cfg.meas.patch_half = 20; % [m] half-width of square footprint (edge-to-edge = 2
 cfg.meas.patch_step = 10; % [m] sample spacing inside the footprint grid
 
 % Particle filter settings (fixed particle count)
-cfg.pf.Np           = 100000;  % number of particles
+cfg.pf.Np           = 10000;  % number of particles
 cfg.pf.sigma_vel    = 1.5;   % [m/s] process noise on speed magnitude
 cfg.pf.sigma_omega  = 0.01;  % [rad/s] process noise on turn rate
 cfg.pf.sigma_meas   = cfg.meas.sigma; % assumed measurement noise
 cfg.pf.resample_ratio = 0.5; % resample when N_eff < ratio * Np
+cfg.viz.store_step  = 1;     % store particle snapshots every N steps for visualization
+cfg.viz.save_video  = true;  % write out a particle evolution video
+cfg.viz.video_file  = 'pf_particles.mp4';
 
 %% Load DEM from GeoTIFF (downsampled for runtime)
 dem = viz_tif(cfg.dem.tifFile, ...
@@ -179,6 +185,15 @@ est.psi = zeros(cfg.N,1);
 % Helper for circular mean so headings average correctly across wrap at +/-pi
 angle_mean = @(theta, w) atan2(sum(w .* sin(theta)), sum(w .* cos(theta)));
 
+% Storage for particle snapshots to visualize evolution (use all steps for slider/video)
+snap_indices = 1:cfg.viz.store_step:cfg.N;
+snap_particles = cell(numel(snap_indices),1);
+snap_weights = cell(numel(snap_indices),1);
+% Store initial snapshot (index 1 corresponds to t=0)
+snap_particles{1} = [particles.x, particles.y];
+snap_weights{1} = particles.w;
+snap_counter = 2;
+
 %% Particle filter recursion
 diag.Needs = []; % not used; placeholder to collect any future diagnostic flags
 diag.weight_sum = zeros(cfg.N,1);
@@ -262,6 +277,13 @@ for k = 2:cfg.N
     est.x(k)   = sum(particles.x .* particles.w);
     est.y(k)   = sum(particles.y .* particles.w);
     est.psi(k) = angle_mean(particles.psi, particles.w);
+
+    % 7) Store particle snapshot for visualization
+    if snap_counter <= numel(snap_indices) && k == snap_indices(snap_counter)
+        snap_particles{snap_counter} = [particles.x, particles.y];
+        snap_weights{snap_counter} = particles.w;
+        snap_counter = snap_counter + 1;
+    end
 end
 
 % Predicted patch means from PF trajectory (for plotting)
@@ -269,23 +291,6 @@ pf_patch_mean = nan(cfg.N,1);
 for k = 1:cfg.N
     pf_patch_mean(k) = nanmean(dem_interp(est.x(k) + patch_dx, est.y(k) + patch_dy));
 end
-
-% Quick console diagnostics
-bad_epochs = find(diag.weight_sum <= eps);
-if ~isempty(bad_epochs)
-    fprintf('Warning: weight sum collapsed at epochs: %s\n', mat2str(bad_epochs));
-end
-nan_est_epochs = find(isnan(est.x) | isnan(est.y) | isnan(est.psi));
-if ~isempty(nan_est_epochs)
-    fprintf('Warning: NaN estimates at epochs: %s\n', mat2str(nan_est_epochs));
-end
-if all(isnan(diag.Neff))
-    fprintf('Neff is NaN throughout (weights likely collapsing early)\n');
-else
-    fprintf('Neff min/mean/max: %.1f / %.1f / %.1f\n', nanmin(diag.Neff(2:end)), nanmean(diag.Neff(2:end)), nanmax(diag.Neff(2:end)));
-end
-fprintf('Avg valid points per particle (likelihood calc) last epoch: %.1f of %d\n', diag.num_valid_pts(end), patch_count);
-fprintf('Resampling triggered %d times (out of %d epochs)\n', sum(diag.resampled), cfg.N);
 
 %% Performance metrics
 % Position error is Euclidean distance between PF estimate and truth at each time.
@@ -296,24 +301,25 @@ fprintf("Final position error: %.1f m | RMSE over trajectory: %.1f m\n", ...
     pos_err(end), rmse);
 
 %% Visualization
-figure;
+figure('Position',[50 550 650 420]);
 imagesc(xg, yg, H); axis xy equal;
 hold on;
 colormap('turbo');
 colorbar; title('Terrain DEM with Truth and PF Estimate');
 plot(truth.x, truth.y, 'k-', 'LineWidth', 1.5, 'DisplayName', 'Truth');
 plot(est.x, est.y, 'r--', 'LineWidth', 1.2, 'DisplayName', 'PF Estimate');
-scatter(truth.x(1), truth.y(1), 50, 'go', 'filled', 'DisplayName', 'Start');
+scatter(truth.x(1), truth.y(1), 70, 'p', 'MarkerFaceColor','y', 'MarkerEdgeColor','k', 'DisplayName', 'Start');
 legend('Location','best');
 xlabel('x [m]'); ylabel('y [m]');
 % Note: imagesc flips y by default, so we used axis xy to keep north-up.
+xlim(x_rng); ylim(y_rng);
 
-figure;
+figure('Position',[750 550 500 300]);
 plot((0:cfg.N-1)*cfg.dt, pos_err, 'LineWidth', 1.5);
 xlabel('Time [s]'); ylabel('Position error [m]');
 grid on; title('Position Error vs Time');
 
-figure;
+figure('Position',[50 80 650 420]);
 subplot(2,1,1);
 plot((0:cfg.N-1)*cfg.dt, truth_patch_mean, 'k', 'LineWidth', 1.2, 'DisplayName','Truth patch mean');
 hold on;
@@ -333,12 +339,87 @@ x_pc = truth.x(:) + patch_dx; % N x M
 y_pc = truth.y(:) + patch_dy; % N x M
 z_pc = meas_patch;            % N x M
 valid_pc = ~isnan(z_pc);
-figure;
+figure('Position',[750 80 500 400]);
 scatter3(x_pc(valid_pc), y_pc(valid_pc), z_pc(valid_pc), 6, z_pc(valid_pc), 'filled');
 colormap('turbo'); cb = colorbar; cb.Label.String = 'Elevation [m MSL]';
 xlabel('x [m]'); ylabel('y [m]'); zlabel('Elevation [m MSL]');
 title('LiDAR patch point cloud (all epochs)');
 axis equal; grid on; view(45,30);
+
+% GUI slider to scrub particle evolution over DEM
+slider_fig = figure('Position',[1280 80 620 690],'Name','Particle Evolution');
+ax_s = axes('Parent',slider_fig,'Position',[0.08 0.12 0.85 0.83]);
+imagesc(ax_s, xg, yg, H); axis(ax_s,'xy','equal'); hold(ax_s,'on');
+colormap(ax_s,'turbo'); colorbar(ax_s);
+plot(ax_s, truth.x, truth.y, 'k:', 'LineWidth', 1.2);
+truth_seg = plot(ax_s, truth.x(1), truth.y(1), 'k-', 'LineWidth', 1.3);
+est_seg   = plot(ax_s, est.x(1), est.y(1), 'r--', 'LineWidth', 1.1);
+p_scat = scatter(ax_s, snap_particles{1}(:,1), snap_particles{1}(:,2), 8, snap_weights{1}, 'filled');
+scatter(ax_s, truth.x(1), truth.y(1), 90, 'p', 'MarkerFaceColor','y', 'MarkerEdgeColor','k', 'LineWidth',1.2);
+xlim(ax_s, x_rng); ylim(ax_s, y_rng);
+title(ax_s, sprintf('Particles at t=%.1f s', (snap_indices(1)-1)*cfg.dt));
+grid(ax_s,'on');
+cb_s = colorbar(ax_s); cb_s.Label.String = 'Elevation [m]';
+slider = uicontrol(slider_fig,'Style','slider','Min',1,'Max',numel(snap_indices),'Value',1,...
+    'SliderStep',[1/(numel(snap_indices)-1) min(1,10/(numel(snap_indices)-1))],...
+    'Units','normalized','Position',[0.1 0.02 0.8 0.05],...
+    'Callback', @(src,evt) slider_callback(src, struct( ...
+        'particles', p_scat, 'truth_seg', truth_seg, 'est_seg', est_seg, ...
+        'snap_particles', {snap_particles}, 'snap_weights', {snap_weights}, ...
+        'truth', truth, 'est', est, 'snap_indices', snap_indices, ...
+        'dt', cfg.dt, 'ax', ax_s )));
+
+% Optional: write a video of particle evolution over DEM
+if cfg.viz.save_video
+    vw = VideoWriter(cfg.viz.video_file, 'MPEG-4');
+    vw.FrameRate = 15;
+    open(vw);
+    vid_fig = figure('Visible','off','Position',[100 100 640 520]);
+    ax_v = axes('Parent',vid_fig);
+    imagesc(ax_v, xg, yg, H); axis(ax_v,'xy','equal'); hold(ax_v,'on');
+    colormap(ax_v,'turbo');
+    plot(ax_v, truth.x, truth.y, 'k:', 'LineWidth', 1.2);
+    v_truth_seg = plot(ax_v, truth.x(1), truth.y(1), 'k-', 'LineWidth', 1.3, 'DisplayName','Truth');
+    v_est_seg   = plot(ax_v, est.x(1), est.y(1), 'r--', 'LineWidth', 1.1, 'DisplayName','PF Estimate');
+    v_scat = scatter(ax_v, snap_particles{1}(:,1), snap_particles{1}(:,2), 8, snap_weights{1}, 'filled', 'DisplayName','Particles');
+    scatter(ax_v, truth.x(1), truth.y(1), 90, 'p', 'MarkerFaceColor','y', 'MarkerEdgeColor','k', 'LineWidth',1.2, 'DisplayName','Start');
+    xlim(ax_v, x_rng); ylim(ax_v, y_rng);
+    title(ax_v, sprintf('Particles at t=%.1f s', 0));
+    legend(ax_v,[v_truth_seg v_est_seg v_scat], {'Truth','PF Estimate','Particles'}, 'Location','best');
+    data_v = struct('particles', v_scat, 'truth_seg', v_truth_seg, 'est_seg', v_est_seg, ...
+        'snap_particles', {snap_particles}, 'snap_weights', {snap_weights}, ...
+        'truth', truth, 'est', est, 'snap_indices', snap_indices, 'dt', cfg.dt, 'ax', ax_v);
+    for idx = 1:numel(snap_indices)
+        if isempty(snap_particles{idx}), continue; end
+        update_particle_frame(idx, data_v);
+        frame = getframe(vid_fig);
+        writeVideo(vw, frame);
+    end
+    close(vw);
+    close(vid_fig);
+    % No console print to keep runtime quiet
+end
+
+%% Helpers for slider/video updates
+function slider_callback(src, data)
+    idx = round(get(src, 'Value'));
+    idx = max(1, min(idx, numel(data.snap_particles)));
+    update_particle_frame(idx, data);
+end
+
+function update_particle_frame(idx, data)
+    if isempty(data.snap_particles{idx})
+        return;
+    end
+    set(data.particles, 'XData', data.snap_particles{idx}(:,1), ...
+        'YData', data.snap_particles{idx}(:,2), ...
+        'CData', data.snap_weights{idx});
+    % Map snapshot index back to actual epoch index
+    t_idx = data.snap_indices(idx);
+    set(data.truth_seg, 'XData', data.truth.x(1:t_idx), 'YData', data.truth.y(1:t_idx));
+    set(data.est_seg,   'XData', data.est.x(1:t_idx),   'YData', data.est.y(1:t_idx));
+    title(data.ax, sprintf('Particles at t=%.1f s', (t_idx-1)*data.dt));
+end
 
 %% Systematic resampling (low-variance sampler)
 function p_out = systematic_resample(p_in)
