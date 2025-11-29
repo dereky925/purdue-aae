@@ -61,6 +61,7 @@ cfg.pf.resample_ratio = 0.5; % resample when N_eff < ratio * Np
 cfg.viz.store_step  = 1;     % store particle snapshots every N steps for visualization
 cfg.viz.save_video  = true;  % write out a particle evolution video
 cfg.viz.video_file  = 'pf_particles.mp4';
+cfg.debug.print_metrics = true;
 
 %% Load DEM from GeoTIFF (downsampled for runtime)
 dem = viz_tif(cfg.dem.tifFile, ...
@@ -181,6 +182,7 @@ particles.w   = ones(Np,1) / Np; % uniform initial weights
 est.x   = zeros(cfg.N,1);
 est.y   = zeros(cfg.N,1);
 est.psi = zeros(cfg.N,1);
+est.sigma_pos = nan(cfg.N,1); % 1-sigma radial position uncertainty from particle spread
 
 % Helper for circular mean so headings average correctly across wrap at +/-pi
 angle_mean = @(theta, w) atan2(sum(w .* sin(theta)), sum(w .* cos(theta)));
@@ -193,6 +195,8 @@ snap_weights = cell(numel(snap_indices),1);
 snap_particles{1} = [particles.x, particles.y];
 snap_weights{1} = particles.w;
 snap_counter = 2;
+respawn_count = 0; % track how many times weights collapsed and we reset
+pf_timer = tic;
 
 %% Particle filter recursion
 diag.Needs = []; % not used; placeholder to collect any future diagnostic flags
@@ -258,6 +262,7 @@ for k = 2:cfg.N
         particles.y   = safe_y_rng(1) + rand(Np_curr,1) * diff(safe_y_rng);
         particles.psi = (rand(Np_curr,1) - 0.5) * 2 * pi;
         particles.w   = ones(Np_curr,1) / Np_curr;
+        respawn_count = respawn_count + 1;
     else
         particles.w = particles.w / w_sum;
     end
@@ -277,6 +282,12 @@ for k = 2:cfg.N
     est.x(k)   = sum(particles.x .* particles.w);
     est.y(k)   = sum(particles.y .* particles.w);
     est.psi(k) = angle_mean(particles.psi, particles.w);
+    % Weighted covariance -> 1-sigma radial bound
+    dx = particles.x - est.x(k);
+    dy = particles.y - est.y(k);
+    var_x = sum(particles.w .* dx.^2);
+    var_y = sum(particles.w .* dy.^2);
+    est.sigma_pos(k) = sqrt(var_x + var_y);
 
     % 7) Store particle snapshot for visualization
     if snap_counter <= numel(snap_indices) && k == snap_indices(snap_counter)
@@ -296,16 +307,22 @@ end
 % Position error is Euclidean distance between PF estimate and truth at each time.
 pos_err = sqrt( (est.x - truth.x).^2 + (est.y - truth.y).^2 );
 rmse    = sqrt(mean(pos_err.^2));
+pf_time = toc(pf_timer);
 
 fprintf("Final position error: %.1f m | RMSE over trajectory: %.1f m\n", ...
     pos_err(end), rmse);
+if cfg.debug.print_metrics
+    fprintf("Particles: %d | Respawns (all weights collapsed): %d | Runtime: %.2f s\n", ...
+        cfg.pf.Np, respawn_count, pf_time);
+end
 
 %% Visualization
 figure('Position',[50 550 650 420]);
 imagesc(xg, yg, H); axis xy equal;
 hold on;
 colormap('turbo');
-colorbar; title('Terrain DEM with Truth and PF Estimate');
+cb_top = colorbar; cb_top.Label.String = 'Elevation [m MSL]';
+title('Terrain DEM with Truth and PF Estimate');
 plot(truth.x, truth.y, 'k-', 'LineWidth', 1.5, 'DisplayName', 'Truth');
 plot(est.x, est.y, 'r--', 'LineWidth', 1.2, 'DisplayName', 'PF Estimate');
 scatter(truth.x(1), truth.y(1), 70, 'p', 'MarkerFaceColor','y', 'MarkerEdgeColor','k', 'DisplayName', 'Start');
@@ -315,9 +332,12 @@ xlabel('x [m]'); ylabel('y [m]');
 xlim(x_rng); ylim(y_rng);
 
 figure('Position',[750 550 500 300]);
-plot((0:cfg.N-1)*cfg.dt, pos_err, 'LineWidth', 1.5);
+plot((0:cfg.N-1)*cfg.dt, pos_err, 'LineWidth', 1.5, 'DisplayName','Error');
+hold on;
+plot((0:cfg.N-1)*cfg.dt, 3*est.sigma_pos, 'r--', 'LineWidth', 1.2, 'DisplayName','3\sigma bound');
 xlabel('Time [s]'); ylabel('Position error [m]');
 grid on; title('Position Error vs Time');
+legend('Location','best');
 
 figure('Position',[50 80 650 420]);
 subplot(2,1,1);
