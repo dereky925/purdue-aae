@@ -60,6 +60,8 @@ dem.bounds.ylim = [min(Y(:)), max(Y(:))];
 dem.bounds.center = [mean(dem.bounds.xlim), mean(dem.bounds.ylim)];
 dem.sampleStep = step;
 dem.nodataVal = nodataVal;
+% Use "nearest" extrapolation so queries exactly on the edge still return data.
+% The PF separately rejects out-of-bounds queries using explicit bounds checks.
 dem.interp = griddedInterpolant(X', Y', Z', "linear", "nearest");
 
 if opts.makePlots
