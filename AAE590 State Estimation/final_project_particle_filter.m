@@ -335,7 +335,7 @@ figure('Position',[750 550 500 300]);
 plot((0:cfg.N-1)*cfg.dt, pos_err, 'LineWidth', 1.6, 'DisplayName','Error');
 hold on;
 plot((0:cfg.N-1)*cfg.dt, 3*est.sigma_pos, 'r--', 'LineWidth', 1.4, 'DisplayName','3\sigma bound');
-xlabel('Time [s]'); ylabel('Position error [m]');
+xlabel('Time [s]'); ylabel('Position error (RSS) [m]');
 grid on; title('Position Error vs Time');
 legend('Location','best');
 
