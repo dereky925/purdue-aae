@@ -21,7 +21,7 @@ clear; clc; close all;
 rng(1); % deterministic seed for repeatability
 set(groot, 'defaultFigureColor', 'w'); % white backgrounds
 set(groot, 'defaultAxesFontSize', 12);
-set(groot, 'defaultLineLineWidth', 1.3);
+set(groot, 'defaultLineLineWidth', 1.6);
 
 % State being estimated: x (east), y (north), psi (heading). Altitude is assumed
 % known from another sensor. Each particle carries one hypothesis of state plus
@@ -325,32 +325,36 @@ cb_top = colorbar; cb_top.Label.String = 'Elevation [m MSL]';
 title('Terrain DEM with Truth and PF Estimate');
 plot(truth.x, truth.y, 'k-', 'LineWidth', 1.5, 'DisplayName', 'Truth');
 plot(est.x, est.y, 'r--', 'LineWidth', 1.2, 'DisplayName', 'PF Estimate');
-scatter(truth.x(1), truth.y(1), 70, 'p', 'MarkerFaceColor','y', 'MarkerEdgeColor','k', 'DisplayName', 'Start');
+scatter(truth.x(1), truth.y(1), 150, 'p', 'MarkerFaceColor','y', 'MarkerEdgeColor','k', 'DisplayName', 'Start');
 legend('Location','best');
 xlabel('x [m]'); ylabel('y [m]');
 % Note: imagesc flips y by default, so we used axis xy to keep north-up.
 xlim(x_rng); ylim(y_rng);
 
 figure('Position',[750 550 500 300]);
-plot((0:cfg.N-1)*cfg.dt, pos_err, 'LineWidth', 1.5, 'DisplayName','Error');
+plot((0:cfg.N-1)*cfg.dt, pos_err, 'LineWidth', 1.6, 'DisplayName','Error');
 hold on;
-plot((0:cfg.N-1)*cfg.dt, 3*est.sigma_pos, 'r--', 'LineWidth', 1.2, 'DisplayName','3\sigma bound');
+plot((0:cfg.N-1)*cfg.dt, 3*est.sigma_pos, 'r--', 'LineWidth', 1.4, 'DisplayName','3\sigma bound');
 xlabel('Time [s]'); ylabel('Position error [m]');
 grid on; title('Position Error vs Time');
 legend('Location','best');
 
 figure('Position',[50 80 650 420]);
 subplot(2,1,1);
-plot((0:cfg.N-1)*cfg.dt, truth_patch_mean, 'k', 'LineWidth', 1.2, 'DisplayName','Truth patch mean');
+plot((0:cfg.N-1)*cfg.dt, truth_patch_mean, 'k', 'LineWidth', 1.6, 'DisplayName','Truth patch mean');
 hold on;
-plot((0:cfg.N-1)*cfg.dt, meas_mean, 'c.', 'DisplayName','LiDAR patch mean');
-plot((0:cfg.N-1)*cfg.dt, pf_patch_mean, 'r', 'LineWidth', 1.0, 'DisplayName','PF patch mean est');
+plot((0:cfg.N-1)*cfg.dt, meas_mean, 'c.', 'MarkerSize', 14, 'DisplayName','LiDAR patch mean');
+plot((0:cfg.N-1)*cfg.dt, pf_patch_mean, 'r', 'LineWidth', 1.4, 'DisplayName','PF patch mean est');
+y3 = pf_patch_mean + 3*cfg.meas.sigma;
+y3m = pf_patch_mean - 3*cfg.meas.sigma;
+plot((0:cfg.N-1)*cfg.dt, y3, 'r--', 'LineWidth', 1.2, 'DisplayName','PF ±3\sigma');
+plot((0:cfg.N-1)*cfg.dt, y3m, 'r--', 'LineWidth', 1.2, 'HandleVisibility','off');
 ylabel('Terrain elev [m MSL]');
 legend; grid on; title('Measurement Track');
 subplot(2,1,2);
-plot((0:cfg.N-1)*cfg.dt, rad2deg(truth.psi), 'k', 'LineWidth', 1.2, 'DisplayName','Truth heading');
+plot((0:cfg.N-1)*cfg.dt, rad2deg(truth.psi), 'k', 'LineWidth', 1.6, 'DisplayName','Truth heading');
 hold on;
-plot((0:cfg.N-1)*cfg.dt, rad2deg(est.psi), 'r--', 'LineWidth', 1.0, 'DisplayName','PF heading');
+plot((0:cfg.N-1)*cfg.dt, rad2deg(est.psi), 'r--', 'LineWidth', 1.4, 'DisplayName','PF heading');
 ylabel('Heading [deg]'); xlabel('Time [s]');
 legend; grid on;
 
