@@ -59,7 +59,7 @@ cfg.pf.sigma_omega  = 0.01;  % [rad/s] process noise on turn rate
 cfg.pf.sigma_meas   = cfg.meas.sigma; % assumed measurement noise
 cfg.pf.resample_ratio = 0.5; % resample when N_eff < ratio * Np
 cfg.viz.store_step  = 1;     % store particle snapshots every N steps for visualization
-cfg.viz.save_video  = true;  % write out a particle evolution video
+cfg.viz.save_video  = false;  % write out a particle evolution video
 cfg.viz.video_file  = 'pf_particles.mp4';
 cfg.debug.print_metrics = true;
 
@@ -366,7 +366,9 @@ xlabel('x [m]'); ylabel('y [m]'); zlabel('Elevation [m MSL]');
 title('LiDAR patch point cloud (all epochs)');
 axis equal; grid on; view(45,30);
 
-% GUI slider to scrub particle evolution over DEM
+% GUI slider to scrub particle evolution over DEM. We pre-store particle
+% snapshots at each time step; moving the slider picks a snapshot and
+% refreshes the scatter and path segments accordingly.
 slider_fig = figure('Position',[1280 80 620 690],'Name','Particle Evolution');
 ax_s = axes('Parent',slider_fig,'Position',[0.08 0.12 0.85 0.83]);
 imagesc(ax_s, xg, yg, H); axis(ax_s,'xy','equal'); hold(ax_s,'on');
@@ -374,7 +376,9 @@ colormap(ax_s,'turbo'); colorbar(ax_s);
 plot(ax_s, truth.x, truth.y, 'k:', 'LineWidth', 1.2);
 truth_seg = plot(ax_s, truth.x(1), truth.y(1), 'k-', 'LineWidth', 1.3);
 est_seg   = plot(ax_s, est.x(1), est.y(1), 'r--', 'LineWidth', 1.1);
-p_scat = scatter(ax_s, snap_particles{1}(:,1), snap_particles{1}(:,2), 8, snap_weights{1}, 'filled');
+w_init = snap_weights{1};
+p_scat = scatter(ax_s, snap_particles{1}(:,1), snap_particles{1}(:,2), 12, 'filled', ...
+    'MarkerFaceColor','c', 'MarkerEdgeColor','k'); % teal
 scatter(ax_s, truth.x(1), truth.y(1), 90, 'p', 'MarkerFaceColor','y', 'MarkerEdgeColor','k', 'LineWidth',1.2);
 xlim(ax_s, x_rng); ylim(ax_s, y_rng);
 title(ax_s, sprintf('Particles at t=%.1f s', (snap_indices(1)-1)*cfg.dt));
@@ -386,10 +390,12 @@ slider = uicontrol(slider_fig,'Style','slider','Min',1,'Max',numel(snap_indices)
     'Callback', @(src,evt) slider_callback(src, struct( ...
         'particles', p_scat, 'truth_seg', truth_seg, 'est_seg', est_seg, ...
         'snap_particles', {snap_particles}, 'snap_weights', {snap_weights}, ...
-        'truth', truth, 'est', est, 'snap_indices', snap_indices, ...
+        'truth', truth, 'est', est, 'snap_indices', snap_indices, 'total_Np', cfg.pf.Np, ...
+        'weight_thresh_factor', 0.01, ...
         'dt', cfg.dt, 'ax', ax_s )));
 
-% Optional: write a video of particle evolution over DEM
+% Optional: write a video of particle evolution over DEM (uses same snapshot
+% storage as the GUI; iterates frames and grabs the figure)
 if cfg.viz.save_video
     vw = VideoWriter(cfg.viz.video_file, 'MPEG-4');
     vw.FrameRate = 15;
@@ -408,7 +414,8 @@ if cfg.viz.save_video
     legend(ax_v,[v_truth_seg v_est_seg v_scat], {'Truth','PF Estimate','Particles'}, 'Location','best');
     data_v = struct('particles', v_scat, 'truth_seg', v_truth_seg, 'est_seg', v_est_seg, ...
         'snap_particles', {snap_particles}, 'snap_weights', {snap_weights}, ...
-        'truth', truth, 'est', est, 'snap_indices', snap_indices, 'dt', cfg.dt, 'ax', ax_v);
+        'truth', truth, 'est', est, 'snap_indices', snap_indices, 'dt', cfg.dt, 'ax', ax_v, ...
+        'total_Np', cfg.pf.Np, 'weight_thresh_factor', 0.01);
     for idx = 1:numel(snap_indices)
         if isempty(snap_particles{idx}), continue; end
         update_particle_frame(idx, data_v);
@@ -431,9 +438,11 @@ function update_particle_frame(idx, data)
     if isempty(data.snap_particles{idx})
         return;
     end
+    w = data.snap_weights{idx};
+    % No count in title; keep color fixed
     set(data.particles, 'XData', data.snap_particles{idx}(:,1), ...
         'YData', data.snap_particles{idx}(:,2), ...
-        'CData', data.snap_weights{idx});
+        'CData', []); % keep teal color
     % Map snapshot index back to actual epoch index
     t_idx = data.snap_indices(idx);
     set(data.truth_seg, 'XData', data.truth.x(1:t_idx), 'YData', data.truth.y(1:t_idx));
