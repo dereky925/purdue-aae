@@ -78,6 +78,8 @@ if opts.makePlots
     axis equal;
     view(45, 60);
     camlight headlight;
+    xlim([406543 411848])
+    exportgraphics(gcf, 'fig_3D_DEM_surface.pdf', 'ContentType', 'vector');
 
     figure;
     valid = ~isnan(Zfull);
@@ -99,6 +101,7 @@ if opts.makePlots
     axis equal;
     view(3);
     grid on;
+    exportgraphics(gcf, 'fig_3D_DEM_pointcloud.pdf', 'ContentType', 'vector');
 end
 
 end

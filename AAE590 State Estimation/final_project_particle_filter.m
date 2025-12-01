@@ -330,16 +330,19 @@ legend('Location','best');
 xlabel('x [m]'); ylabel('y [m]');
 % Note: imagesc flips y by default, so we used axis xy to keep north-up.
 xlim(x_rng); ylim(y_rng);
+exportgraphics(gcf, 'fig_dem_truth_pf.pdf', 'ContentType', 'vector');
 
-figure('Position',[750 550 500 300]);
+figure('Position',[750 550 1000 400]);
 plot((0:cfg.N-1)*cfg.dt, pos_err, 'LineWidth', 1.6, 'DisplayName','Error');
 hold on;
 plot((0:cfg.N-1)*cfg.dt, 3*est.sigma_pos, 'r--', 'LineWidth', 1.4, 'DisplayName','3\sigma bound');
 xlabel('Time [s]'); ylabel('Position error (RSS) [m]');
 grid on; title('Position Error vs Time');
-legend('Location','best');
+legend('Location','best');ylim([0 40])
+exportgraphics(gcf, 'fig_pos_error.pdf', 'ContentType', 'vector');
 
-figure('Position',[50 80 650 420]);
+
+figure('Position',[50 80 1000 620]);
 subplot(2,1,1);
 plot((0:cfg.N-1)*cfg.dt, truth_patch_mean, 'k', 'LineWidth', 1.6, 'DisplayName','Truth patch mean');
 hold on;
@@ -357,23 +360,25 @@ hold on;
 plot((0:cfg.N-1)*cfg.dt, rad2deg(est.psi), 'r--', 'LineWidth', 1.4, 'DisplayName','PF heading');
 ylabel('Heading [deg]'); xlabel('Time [s]');
 legend; grid on;
+exportgraphics(gcf, 'fig_heading.pdf', 'ContentType', 'vector');
 
 % Point cloud of all LiDAR patch measurements (all time steps)
 x_pc = truth.x(:) + patch_dx; % N x M
 y_pc = truth.y(:) + patch_dy; % N x M
 z_pc = meas_patch;            % N x M
 valid_pc = ~isnan(z_pc);
-figure('Position',[750 80 500 400]);
+figure('Position',[750 80 1000 600]);
 scatter3(x_pc(valid_pc), y_pc(valid_pc), z_pc(valid_pc), 6, z_pc(valid_pc), 'filled');
 colormap('turbo'); cb = colorbar; cb.Label.String = 'Elevation [m MSL]';
 xlabel('x [m]'); ylabel('y [m]'); zlabel('Elevation [m MSL]');
 title('LiDAR patch point cloud (all epochs)');
-axis equal; grid on; view(45,30);
+axis equal; grid on; view(-45,30);
+exportgraphics(gcf, 'fig_truth_lidar_patches.pdf', 'ContentType', 'vector');
 
 % GUI slider to scrub particle evolution over DEM. We pre-store particle
 % snapshots at each time step; moving the slider picks a snapshot and
 % refreshes the scatter and path segments accordingly.
-slider_fig = figure('Position',[1280 80 620 690],'Name','Particle Evolution');
+slider_fig = figure('Position',[1280 80 1000 1100],'Name','Particle Evolution');
 ax_s = axes('Parent',slider_fig,'Position',[0.08 0.12 0.85 0.83]);
 imagesc(ax_s, xg, yg, H); axis(ax_s,'xy','equal'); hold(ax_s,'on');
 colormap(ax_s,'turbo'); colorbar(ax_s);
