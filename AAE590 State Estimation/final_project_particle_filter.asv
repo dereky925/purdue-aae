@@ -23,12 +23,12 @@ cfg.h_msl       = @(t) 500 + 20*sin(0.01*t); % [m] UAV altitude (mean sea level)
 
 cfg.dem.tifFile      = 'grand_canyon_rectangle_slice.tin.tif';
 cfg.dem.sample_step  = 5;    % decimate raster for speed; 1 for full res
-cfg.dem.point_step   = 1;  % for the optional point cloud visualization
+cfg.dem.point_step   = 500;  % for the optional point cloud visualization
 
 % LiDAR / measurement model
-cfg.meas.bias     = 1;  % [m] 0.1 - LiDAR range bias ( Velodyne-class spec)
-cfg.meas.sigma    = 3;  % [m] 0.3 - 1 sigma range noise (realistic small-UAV LiDAR)
-cfg.meas.drop_p   = 0;  % Dropout probability (occasional full-scan miss)
+cfg.meas.bias     = 1.5;  % [m]
+cfg.meas.sigma    = 3.0;  % [m] 1 sigma
+cfg.meas.drop_p   = 0.0;  % Dropout probability
 cfg.meas.patch_half = 20; % [m] half-width of square footprint
 cfg.meas.patch_step = 10; % [m] sample spacing inside the footprint grid
 
@@ -150,14 +150,6 @@ snap_weights{1} = particles.w;
 snap_counter = 2;
 respawn_count = 0; % track how many times weights collapsed and we reset
 pf_timer = tic;
-
-% Initial estimate from the prior particle set (avoids huge initial error)
-est.x(1)   = sum(particles.x .* particles.w);
-est.y(1)   = sum(particles.y .* particles.w);
-est.psi(1) = angle_mean(particles.psi, particles.w);
-dx0 = particles.x - est.x(1);
-dy0 = particles.y - est.y(1);
-est.sigma_pos(1) = sqrt(sum(particles.w .* dx0.^2) + sum(particles.w .* dy0.^2));
 
 %% Particle filter recursion
 diag.Needs = [];
@@ -454,7 +446,7 @@ end
 
 %% S-turn yaw rate profile: sinusoid for a window, then zero
 function omega = s_turn_profile(t, active_duration, omega_amp)
-    % Models an "S" maneuver, a sinusoidal yaw rate for active_duration
+    % Models an "S" maneuver: a sinusoidal yaw rate for active_duration
     % seconds, then straight flight (omega = 0) afterward.
     if t <= active_duration
         omega = omega_amp * sin(2*pi*t/active_duration);

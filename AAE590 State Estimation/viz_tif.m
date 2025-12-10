@@ -1,7 +1,7 @@
 function dem = viz_tif(tifFile, varargin)
 %VIZ_TIF Load a DEM GeoTIFF and optionally visualize it.
 %   dem = viz_tif(tifFile) loads tifFile, removes NoData, and returns a
-%   struct with downsampled X/Y/Z grids, bounds, and a griddedInterpolant.
+%   struct with downsampled X/Y/Z grids, bounds, and a griddedInterpolant
 %
 %   dem = viz_tif(tifFile, 'sampleStep', N, 'pointCloudStep', M,
 %   'makePlots', true) adjusts the raster decimation used for both the

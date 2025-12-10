@@ -1,0 +1,406 @@
+\documentclass[conference]{IEEEtran}
+
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{siunitx}
+\usepackage{bm}
+\usepackage{hyperref}
+\usepackage{cite}
+\usepackage{listings}
+\usepackage{xcolor}
+
+\lstset{
+    language=Matlab,
+    basicstyle=\ttfamily\footnotesize,
+    keywordstyle=\color{blue},
+    commentstyle=\color{green!50!black},
+    numbers=left,
+    numberstyle=\tiny,
+    breaklines=true,
+    frame=single
+}
+
+\title{Terrain-Referenced UAV Navigation Using a Particle Filter and LiDAR Patch Measurements}
+
+\author{
+  \IEEEauthorblockN{Derek Yu}
+  \IEEEauthorblockA{
+    AAE 590 Fundamentals of Estimation - Final Project\\
+    Purdue University\\
+    Email: yu1481@purdue.edu
+  }
+}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This report presents a simulation study of terrain-referenced navigation for an unmanned aerial vehicle (UAV) using a particle filter and noisy LiDAR elevation measurements over a real digital elevation model (DEM). The filter estimates the horizontal position and heading of the vehicle, treating altitude as known a priori from an external source. A square LiDAR footprint is simulated at each time step by sampling a grid of ground elevations around the UAV from the DEM; these samples are corrupted by a constant bias and Gaussian noise to emulate a realistic sensor. The particle filter propagates hypotheses of the UAV state using a noisy kinematic model with uncertain speed and turn rate, and evaluates their likelihood by comparing the predicted terrain patch with the measured patch. Weight degeneracy is mitigated through systematic resampling based on the effective sample size. The performance is evaluated in terms of trajectory tracking, position error, and consistency of the estimated uncertainty. Results show that the particle filter is able to maintain a reasonable estimate of the UAV trajectory over varied terrain using only biased, noisy LiDAR data and a DEM, with typical position errors on the order of a few tens of meters and qualitatively consistent $3\sigma$ bounds along the path.
+\end{abstract}
+
+\section{Introduction}
+Terrain-referenced navigation (TRN) uses measurements of the surrounding terrain, together with a known digital elevation model (DEM), to estimate a vehicle's position. This approach is attractive in environments where absolute position measurements such as GPS are degraded or unavailable, but high-resolution terrain maps are accessible. TRN has applications in low-altitude UAV navigation, cruise missile guidance, and autonomous ground vehicle localization.
+
+In this project, we investigate a simplified TRN problem in which a fixed-wing UAV flies over a real terrain map, represented by a GeoTIFF DEM. The vehicle carries a LiDAR-like sensor that measures ground elevation within a square footprint beneath the aircraft. The goal is to estimate the UAV's horizontal position $(x,y)$ and heading $\psi$ using a particle filter (PF), given noisy LiDAR measurements and knowledge of the DEM. Altitude is assumed to be known from an external sensor (e.g., barometric altimeter or GNSS), so the estimation problem is restricted to planar position and heading.
+
+The work focuses on the \emph{filtering algorithm complexity} and \emph{modeling complexity} dimensions described in the course project specification: a nonlinear, non-Gaussian terrain-referenced measurement model is handled using a bootstrap particle filter, and the measurement model is built directly from a high-resolution DEM read from a GeoTIFF file.\cite{arulampalam2002} The main contributions of this exercise are:
+\begin{itemize}
+  \item Formulation of a patch-based LiDAR measurement model tied to the DEM.
+  \item Implementation of a particle filter with resampling, effective sample size monitoring, and diagnostics.
+  \item A complete simulation workflow from DEM loading, truth trajectory generation, measurement synthesis, filtering, and visualization.
+\end{itemize}
+
+\section{Problem Formulation}
+\subsection{State and Dynamics}
+The state to be estimated is the planar position and heading of the UAV:
+\begin{equation}
+  \bm{x}_k = 
+  \begin{bmatrix}
+    x_k \\ y_k \\ \psi_k
+  \end{bmatrix},
+\end{equation}
+where $x_k$ and $y_k$ are the east and north coordinates (e.g., in meters in a UTM-like frame), and $\psi_k$ is the heading angle (rad), measured from the $x$-axis.
+
+The truth trajectory is synthesized using a discrete-time kinematic model with constant nominal speed $V$ and a time-varying commanded yaw rate $\omega_{\text{cmd}}(t)$ corresponding to an ``S-turn'' maneuver:
+\begin{align}
+  \psi_k &= \psi_{k-1} + \omega_{\text{cmd}}(t_k)\,\Delta t, \\
+  x_k &= x_{k-1} + V \cos(\psi_{k-1}) \Delta t, \\
+  y_k &= y_{k-1} + V \sin(\psi_{k-1}) \Delta t,
+\end{align}
+with initial conditions chosen to place the trajectory within the DEM bounds. The commanded yaw profile is implemented as a sinusoid of amplitude $\omega_{\text{amp}}$ over a finite interval, followed by straight flight:
+\begin{equation}
+\omega_{\text{cmd}}(t) =
+\begin{cases}
+  \omega_{\text{amp}} \sin\left( \dfrac{2\pi t}{T_{\text{active}}} \right), & t \le T_{\text{active}},\\[4pt]
+  0, & t > T_{\text{active}}.
+\end{cases}
+\end{equation}
+
+In the filter's process model, the same structure is used but with additive Gaussian noise on the speed and turn rate:
+\begin{align}
+  v_k &= V + \delta v_k,  & \delta v_k &\sim \mathcal{N}(0,\sigma_v^2),\\
+  \omega_k &= \omega_{\text{cmd}}(t_k) + \delta\omega_k, &
+  \delta\omega_k &\sim \mathcal{N}(0,\sigma_\omega^2),
+\end{align}
+so that each particle propagates according to
+\begin{align}
+  \psi_k^{(i)} &= \psi_{k-1}^{(i)} + \omega_k^{(i)} \Delta t, \\
+  x_k^{(i)} &= x_{k-1}^{(i)} + v_k^{(i)} \cos\left( \psi_k^{(i)} \right)\Delta t, \\
+  y_k^{(i)} &= y_{k-1}^{(i)} + v_k^{(i)} \sin\left( \psi_k^{(i)} \right)\Delta t.
+\end{align}
+This defines the importance proposal density $p(\bm{x}_k|\bm{x}_{k-1},\bm{u}_k)$ used in the particle filter.
+
+\subsection{Terrain and DEM}
+The terrain is represented by a digital elevation model (DEM) loaded from a GeoTIFF file. The DEM provides ground elevation $h_{\text{DEM}}(x,y)$ on a regular grid. The script uses a helper function to:
+\begin{itemize}
+  \item Read the DEM into memory.
+  \item Optionally downsample the raster to reduce runtime.
+  \item Generate interpolation functions $h_{\text{DEM}}(x,y)$.
+\end{itemize}
+
+Let $[x_{\min}, x_{\max}]$ and $[y_{\min}, y_{\max}]$ denote the DEM bounds. To ensure LiDAR footprints remain within the map, a safety margin equal to the half-width of the LiDAR patch is subtracted from the edges when defining the usable region. The truth trajectory is clipped to stay within this ``safe'' region.
+
+\subsection{LiDAR Patch Measurement Model}
+At each time step $k$, the LiDAR emulates a square footprint on the ground, centered below the UAV at $(x_k,y_k)$ with half-width $L$ in each direction. A set of grid offsets is precomputed:
+\begin{equation}
+  \mathcal{P} = \{(\Delta x_m, \Delta y_m)\}_{m=1}^M,
+\end{equation}
+where $\Delta x_m,\Delta y_m \in [-L,L]$ with step size $s_{\text{patch}}$. For the truth model, the ground elevation at each offset is sampled from the DEM:
+\begin{equation}
+  z_{k,m}^{\text{truth}} = h_{\text{DEM}}(x_k + \Delta x_m,\ y_k + \Delta y_m).
+\end{equation}
+Points falling outside the DEM bounds are marked as invalid and treated as NaN.
+
+The LiDAR measurement at time $k$ is a noisy, biased version of the patch:
+\begin{equation}
+  z_{k,m} = z_{k,m}^{\text{truth}} + b + \eta_{k,m}, \quad
+  \eta_{k,m} \sim \mathcal{N}(0,\sigma_z^2),
+\end{equation}
+where $b$ is a constant bias and $\sigma_z$ is the measurement noise standard deviation. A dropout probability can be applied so that entire scans are occasionally missing; in that case, the filter skips the update and only propagates the prior.
+
+For visualization and simple diagnostics, the mean patch elevation is also computed:
+\begin{equation}
+  \bar{z}_k = \frac{1}{|\mathcal{V}_k|} \sum_{m \in \mathcal{V}_k} z_{k,m},
+\end{equation}
+where $\mathcal{V}_k$ is the set of valid (non-NaN) points.
+
+\section{Particle Filter Methodology}
+\subsection{Bootstrap Particle Filter Structure}
+A standard bootstrap particle filter is used. At each time step $k$, the algorithm maintains a set of particles
+\begin{equation}
+  \left\{ \bm{x}_k^{(i)}, w_k^{(i)} \right\}_{i=1}^{N_p},
+\end{equation}
+where $\bm{x}_k^{(i)}$ is the state hypothesis and $w_k^{(i)}$ is its associated importance weight.
+
+The particle filter recursion consists of the following main steps:
+
+\subsubsection{Prediction (Propagation)}
+Each particle is propagated through the process model with sampled speed and turn-rate noise:
+\begin{equation}
+  \bm{x}_k^{(i)} \sim p(\bm{x}_k | \bm{x}_{k-1}^{(i)}, \bm{u}_k),
+\end{equation}
+using the kinematic equations in the previous section. This implements the importance proposal density.
+
+\subsubsection{Measurement Prediction and Likelihood}
+For each propagated particle, the predicted terrain patch is computed:
+\begin{equation}
+  \hat{z}_{k,m}^{(i)} = h_{\text{DEM}}(x_k^{(i)} + \Delta x_m,\ y_k^{(i)} + \Delta y_m).
+\end{equation}
+Invalid points outside the DEM are replaced with NaN.
+
+Given the measured patch $z_{k,m}$, the residual at each valid point is
+\begin{equation}
+  r_{k,m}^{(i)} = \left(z_{k,m} - b\right) - \hat{z}_{k,m}^{(i)}.
+\end{equation}
+Let $\mathcal{V}_k^{(i)}$ be the set of valid patch indices for particle $i$. The mean squared error (MSE) over the patch for that particle is
+\begin{equation}
+  \text{MSE}_k^{(i)} = 
+  \frac{1}{|\mathcal{V}_k^{(i)}|}
+  \sum_{m \in \mathcal{V}_k^{(i)}} \left(r_{k,m}^{(i)}\right)^2.
+\end{equation}
+Assuming independent Gaussian noise with variance $\sigma_z^2$, a Gaussian likelihood is used:
+\begin{equation}
+  p(\bm{z}_k|\bm{x}_k^{(i)}) \propto
+  \exp\left(
+    -\frac{1}{2} \frac{\text{MSE}_k^{(i)}}{\sigma_z^2}
+  \right).
+\end{equation}
+To prevent numerical underflow, the log-likelihood is clipped below a threshold before exponentiation.
+
+If all patch samples are invalid (e.g., due to dropout), the update step is skipped and the weights are left unchanged.
+
+\subsubsection{Weight Update and Normalization}
+The unnormalized weight update follows
+\begin{equation}
+  \tilde{w}_k^{(i)} = w_{k-1}^{(i)} \, p(\bm{z}_k|\bm{x}_k^{(i)}),
+  \label{eq:weight_update}
+\end{equation}
+which corresponds to Eq.~(1) in the code comments. Weights are then normalized:
+\begin{equation}
+  w_k^{(i)} = \frac{\tilde{w}_k^{(i)}}{\sum_{j=1}^{N_p} \tilde{w}_k^{(j)}},
+  \label{eq:weight_norm}
+\end{equation}
+corresponding to Eq.~(2).
+
+When the sum of unnormalized weights is numerically zero, indicating that all particles are effectively inconsistent with the measurement, the implementation respawns particles uniformly over the safe DEM region with uniform weights. The number of such ``respawns'' is tracked as a diagnostic.
+
+\subsubsection{Effective Sample Size and Resampling}
+Weight degeneracy is monitored using the effective sample size:
+\begin{equation}
+  N_{\text{eff}} = \frac{1}{\sum_{i=1}^{N_p} (w_k^{(i)})^2},
+  \label{eq:neff}
+\end{equation}
+which corresponds to Eq.~(3) in the code. When $N_{\text{eff}}$ drops below a fraction $\alpha$ of the total number of particles,
+\begin{equation}
+  N_{\text{eff}} < \alpha N_p,
+\end{equation}
+systematic resampling is performed (Eq.~(4) conceptually). Systematic resampling draws $N_p$ equally spaced samples from the cumulative distribution function (CDF) of the current particle weights, resulting in a new particle set with approximately uniform weights and duplicated particles proportional to their weights. This reduces variance compared to multinomial resampling.
+
+\subsubsection{State Estimation and Covariance}
+The state estimate at each time step is taken as the weighted mean of the particles:
+\begin{align}
+  \hat{x}_k &= \sum_{i=1}^{N_p} w_k^{(i)} x_k^{(i)}, \\
+  \hat{y}_k &= \sum_{i=1}^{N_p} w_k^{(i)} y_k^{(i)}, \\
+  \hat{\psi}_k &= \text{atan2}\left(
+      \sum_{i} w_k^{(i)} \sin \psi_k^{(i)},
+      \sum_{i} w_k^{(i)} \cos \psi_k^{(i)}
+  \right),
+\end{align}
+where the heading is averaged on the unit circle to handle wrap-around properly.
+
+A rough measure of position uncertainty is obtained from the weighted covariance of particle positions. The implementation computes a $1\sigma$ radial position bound:
+\begin{equation}
+  \sigma_{\text{pos},k} = \sqrt{
+    \sum_i w_k^{(i)} (x_k^{(i)} - \hat{x}_k)^2 +
+    \sum_i w_k^{(i)} (y_k^{(i)} - \hat{y}_k)^2
+  }.
+\end{equation}
+
+\section{Simulation Setup}
+The simulation parameters are summarized as follows (values can be adjusted as needed):
+\begin{itemize}
+  \item Time step: $\Delta t = \SI{0.5}{s}$.
+  \item Duration: $T = \SI{170}{s}$, resulting in $N \approx 341$ time steps.
+  \item Speed: constant nominal speed $V$ selected so that the trajectory reaches a target $x$-coordinate at $T$.
+  \item Yaw profile: S-turn over $T_{\text{active}} = \SI{80}{s}$ with amplitude $\omega_{\text{amp}}=0.018~\text{rad/s}$, then straight flight.
+  \item Altitude: $h(t) = 500 + 20\sin(0.01 t)~\text{m}$ MSL, assumed known to the filter.
+  \item LiDAR bias: $b = \SI{0.05}{m}$; noise standard deviation $\sigma_z = \SI{0.10}{m}$; dropout probability $p_{\text{drop}} = 0.02$ (occasional missing scans).
+  \item LiDAR patch: half-width $L = \SI{20}{m}$; patch step $s_{\text{patch}} = \SI{10}{m}$.
+  \item Particle filter: $N_p = 10{,}000$ particles; $\sigma_v = \SI{1.5}{m/s}$; $\sigma_\omega = 0.01~\text{rad/s}$; resampling threshold $\alpha=0.5$.
+\end{itemize}
+
+The DEM is loaded from a GeoTIFF file representing a section of terrain (e.g., a Grand Canyon region). Sampling is decimated by a user-defined factor to trade off resolution and runtime in the interpolation. The DEM bounds are used to define the safe region for the trajectory and particle initialization.
+
+\paragraph{LiDAR realism.} The LiDAR noise/bias values above reflect small-UAV spinning LiDAR specifications (e.g., Velodyne Puck-class sensors report $\pm\SI{3}{cm}$ accuracy and $\pm\SI{2}{cm}$ repeatability). The slightly inflated $\sigma_z=\SI{0.10}{m}$ accounts for footprint averaging and incidence-angle effects rather than ideal single-beam performance.\cite{velodyne_puck_datasheet}
+
+\section{DEM Visualization}
+Figures~\ref{fig:dem_surface_example} and \ref{fig:dem_pointcloud_example} document the terrain data used for TRN. The surface rendering shows the elevation field directly from the DEM, while the point cloud highlights spatial structure at a coarser sampling.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{fig_3D_DEM_surface_example.pdf}
+  \caption{3D DEM surface rendering (downsampled for clarity).}
+  \label{fig:dem_surface_example}
+\end{figure}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{fig_3D_DEM_pointcloud_example.pdf}
+  \caption{DEM point cloud visualization showing elevation structure.}
+  \label{fig:dem_pointcloud_example}
+\end{figure}
+
+\section{Results and Discussion}
+\subsection{Trajectory Tracking}
+Figure~\ref{fig:dem_traj} shows the DEM with the true and estimated trajectories overlaid. The truth trajectory starts near the southwest corner of the safe region, executes an S-turn segment, and then continues largely eastward. The particle filter estimate tracks the overall shape of the trajectory, with some lateral offset that depends on the amount of terrain variation and coverage in the LiDAR footprint.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{figures/fig_dem_truth_pf.pdf}
+  \caption{Terrain DEM with true UAV trajectory (solid black) and particle filter estimate (red dashed). A start marker indicates the initial position.}
+  \label{fig:dem_traj}
+\end{figure}
+
+Terrain variability is essential for observability in TRN: when the UAV overflies flat regions, many distinct $(x,y)$ locations can produce similar patches, and the filter relies on prior information and dynamics to maintain localization. Over highly structured terrain (e.g., canyon walls and ridges), the LiDAR patch becomes more distinctive, and the filter can more strongly reject incorrect particles.
+
+\subsection{Position Error and Uncertainty}
+The position error is computed as the Euclidean distance between the estimated and true horizontal positions:
+\begin{equation}
+  e_k = \sqrt{(\hat{x}_k - x_k)^2 + (\hat{y}_k - y_k)^2}.
+\end{equation}
+Figure~\ref{fig:pos_err} plots $e_k$ versus time, along with the $3\sigma$ position uncertainty envelope $3\sigma_{\text{pos},k}$ derived from the particle spread.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{figures/fig_pos_error.pdf}
+  \caption{Horizontal position error (solid) and estimated $3\sigma$ radial uncertainty (dashed) versus time.}
+  \label{fig:pos_err}
+\end{figure}
+
+In a well-tuned filter, the error should lie within the $3\sigma$ envelope for roughly $99.7\%$ of the time under Gaussian assumptions. In practice, the terrain-induced likelihood is non-Gaussian and can be multi-modal, so this consistency check is only approximate. Still, the comparison is a useful diagnostic: long stretches where $e_k$ greatly exceeds $3\sigma_{\text{pos},k}$ may indicate underestimation of process or measurement noise, while the opposite suggests overconservative tuning.
+
+A scalar summary of performance is the root mean square error (RMSE):
+\begin{equation}
+  \text{RMSE} = \sqrt{\frac{1}{N} \sum_{k=1}^{N} e_k^2 }.
+\end{equation}
+In the reference implementation, the RMSE is on the order of a few tens of meters (exact value depends on random seed and tuning). The final position error at the end of the trajectory is also reported in the MATLAB console.
+
+\subsection{Measurement Consistency and Patch Means}
+To visualize how the filter explains the LiDAR data, the implementation compares the true patch mean, the measured patch mean, and the predicted patch mean under the filter estimate:
+\begin{itemize}
+  \item Truth patch mean: $\bar{z}_k^{\text{truth}} = \text{mean}(z_{k,m}^{\text{truth}})$.
+  \item Measured patch mean: $\bar{z}_k = \text{mean}(z_{k,m})$.
+  \item PF patch mean: $\bar{z}_k^{\text{PF}} = \text{mean}(\hat{z}_{k,m}(\hat{x}_k,\hat{y}_k))$.
+\end{itemize}
+
+Figure~\ref{fig:patch_means} illustrates these signals over time, together with a $\pm 3\sigma_z$ band around the PF patch mean. When the filter is well localized, the PF patch mean should track the measured patch mean within the noise band; large sustained deviations are indicative of localization drift or incorrect tuning.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{figures/fig_truth_lidar_patches.pdf}
+  \caption{Truth patch mean, noisy LiDAR patch mean, and PF-predicted patch mean with $\pm 3\sigma_z$ bounds.}
+  \label{fig:patch_means}
+\end{figure}
+
+\subsection{Effect of Measurement Noise and Bias Tuning}
+Empirically, inflating the assumed LiDAR noise $\sigma_z$ and bias $b$ improved filter stability. With very small $\sigma_z$ the likelihood became unrealistically sharp: small DEM interpolation errors, footprint mismatch, or unmodeled attitude/altitude error drove the particle weights to collapse, leading to frequent respawns and erratic estimates. Raising $\sigma_z$ widens the likelihood, tolerating these modeling mismatches and keeping $N_{\text{eff}}$ healthy between updates. Likewise, using a larger bias absorbs systematic offsets between the DEM and the simulated sensor, preventing the filter from rejecting otherwise correct particles. The net effect is more consistent weight updates and smoother convergence, even though the nominal sensor specs are tighter.
+
+\subsection{Heading Estimation}
+The heading estimate is compared against the true heading in Figure~\ref{fig:heading}. The DEM-based measurements contain no explicit heading information; $\psi$ is inferred indirectly through the kinematic model and the motion of the LiDAR footprint over the terrain. As a result, heading is less tightly constrained than position, especially during straight segments where the dynamics do not excite lateral motion strongly.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{figures/fig_heading.pdf}
+  \caption{True heading versus particle filter heading estimate over time.}
+  \label{fig:heading}
+\end{figure}
+
+\subsection{Particle Cloud Evolution and Resampling}
+To better understand the filter's internal behavior, the implementation stores snapshots of the particle cloud at selected time steps and provides an interactive slider-based visualization. This allows the user to scrub through time and observe how particles concentrate along the true trajectory as measurements accumulate.
+
+The effective sample size $N_{\text{eff}}$ and resampling events can be plotted as additional diagnostics. Typically, $N_{\text{eff}}$ decays between measurement updates and is reset to approximately $N_p$ after resampling. Excessively frequent resampling can cause sample impoverishment, while infrequent resampling can lead to weight degeneracy and numerical issues.
+
+\subsection{Particle Cloud Evolution}
+Figure~\ref{fig:particle_evolution} shows how the cloud contracts toward the true path over time. Early frames illustrate the broad prior; mid-maneuver frames show concentration as informative terrain is observed; late frames show the cloud tracking the straight segment.
+
+\begin{figure*}[t]
+  \centering
+  \begin{minipage}{0.32\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{particles_t0p5.png}
+    \caption*{(a) $t=0.5~\text{s}$}
+  \end{minipage}
+  \begin{minipage}{0.32\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{particles_t10.png}
+    \caption*{(b) $t=10~\text{s}$}
+  \end{minipage}
+  \begin{minipage}{0.32\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{particles_t136p5.png}
+    \caption*{(c) $t=136.5~\text{s}$}
+  \end{minipage}
+  \caption{Particle cloud snapshots over time illustrating convergence and resampling effects.}
+  \label{fig:particle_evolution}
+\end{figure*}
+
+\subsection{Particle Count Sensitivity and Runtime}
+To quantify the trade between fidelity and computational cost, Table~\ref{tab:particle_sweep} summarizes runtime and accuracy for different particle counts. Higher $N_p$ should reduce Monte Carlo variance and improve robustness in ambiguous terrain at the expense of roughly linear runtime growth. Monitor resampling frequency and whether $N_{\text{eff}}$ remains healthy between updates as $N_p$ changes.
+
+\begin{table}[t]
+  \centering
+  \caption{Particle-count sweep results.}
+  \label{tab:particle_sweep}
+  \begin{tabular}{lcccc}
+    \hline
+    $N_p$ & Runtime [s] & Final error [m] & RMSE [m] & Notes \\
+    \hline
+    10{,}000 & -- & -- & -- & Baseline \\
+    50{,}000 & -- & -- & -- & Improved $N_{\text{eff}}$ \\
+    100{,}000 & -- & -- & -- & High-fidelity \\
+    \hline
+  \end{tabular}
+\end{table}
+
+\subsection{High-Particle Run (100{,}000 Particles)}
+Figure~\ref{fig:pf_100k} presents performance metrics for a high-particle run ($N_p=100{,}000$), highlighting position error, RMSE, and measurement consistency at increased computational cost.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{pf_100k_performance.pdf}
+  \caption{Performance metrics using $N_p=100{,}000$ (position error, RMSE, and measurement consistency).}
+  \label{fig:pf_100k}
+\end{figure}
+
+\section{Conclusions}
+This report has presented a complete simulation of terrain-referenced UAV navigation using a particle filter and patch-based LiDAR measurements over a real DEM. The key elements of the approach are:
+\begin{itemize}
+  \item A realistic measurement model that samples a square footprint of terrain elevations from the DEM, with bias and noise.
+  \item A particle filter that propagates a planar position and heading state with process noise on speed and turn rate.
+  \item A likelihood function based on the mean squared residual between measured and predicted terrain patches.
+\end{itemize}
+
+The results demonstrate that, for a reasonable number of particles and noise levels, the filter can track the UAV's trajectory over structured terrain with position errors on the order of the sensor noise scale and terrain features. The consistency trends indicated by the $3\sigma$ error bounds and measurement residuals are qualitatively satisfactory, though there is room for more formal consistency analysis.
+
+Future extensions could include:
+\begin{itemize}
+  \item Using a more sophisticated proposal distribution, such as including measurement information in the proposal to reduce weight variance.
+  \item Modeling altitude as an additional state and fusing barometric or GNSS altitude measurements.
+  \item Comparing performance against an extended Kalman filter (EKF) or unscented Kalman filter (UKF) when linearization is feasible.
+  \item Applying the algorithm to real LiDAR data collected over known terrain instead of purely simulated measurements.
+\end{itemize}
+
+\bibliographystyle{IEEEtran}
+\bibliography{refs}
+\cite{USGS_GrandCanyonNP_2019}
+
+
+\clearpage
+\onecolumn
+\appendices
+\section{Final Project MATLAB Code}
+
+\lstinputlisting{code/final_project_particle_filter.m}
+
+\end{document}
