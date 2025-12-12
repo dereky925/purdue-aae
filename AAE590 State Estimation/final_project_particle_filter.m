@@ -19,7 +19,7 @@ cfg.start.y     = 3992410;  % [m] UTM Northing start
 cfg.path.x_target = 411428; % [m] desired end x (eastward)
 cfg.V           = (cfg.path.x_target - cfg.start.x) / cfg.T; % [m/s] set to hit target x
 cfg.omega_cmd   = @(t) s_turn_profile(t, 80, 0.018); % [rad/s] S-turn then straighten
-cfg.h_msl       = @(t) 500 + 20*sin(0.01*t); % [m] UAV altitude (mean sea level)
+cfg.h_msl       = @(t) 500 + 0*t; % [m] UAV altitude (mean sea level)
 
 cfg.dem.tifFile      = 'grand_canyon_rectangle_slice.tin.tif';
 cfg.dem.sample_step  = 5;    % decimate raster for speed; 1 for full res
@@ -28,7 +28,7 @@ cfg.dem.point_step   = 1;  % for the optional point cloud visualization
 % LiDAR / measurement model
 cfg.meas.bias     = 1;  % [m] 0.1 - LiDAR range bias ( Velodyne-class spec)
 cfg.meas.sigma    = 3;  % [m] 0.3 - 1 sigma range noise (realistic small-UAV LiDAR)
-cfg.meas.drop_p   = 0;  % Dropout probability (occasional full-scan miss)
+cfg.meas.drop_p   = 0.02;  % Dropout probability (occasional full-scan miss)
 cfg.meas.patch_half = 20; % [m] half-width of square footprint
 cfg.meas.patch_step = 10; % [m] sample spacing inside the footprint grid
 
